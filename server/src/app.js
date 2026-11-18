@@ -7,6 +7,7 @@ import { logger } from './config/logger.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { apiLimiter } from './middleware/rateLimit.js';
 import routes from './routes/index.js';
+import { SiteSettings } from './models/index.js';
 import seoRoutes, { clientRouter } from './routes/seo.js';
 
 export function createApp() {
@@ -41,6 +42,32 @@ export function createApp() {
       allowedHeaders: ['Content-Type', 'Authorization'],
     }),
   );
+  // One address for search engines: aibyte.world and www.aibyte.world both
+  // reach the site, so page visits on the other one are sent (301) to the
+  // address set as Site URL.
+  if (env.isProd) {
+    let cached = { at: 0, host: '' };
+    app.use(async (req, res, next) => {
+      if (!['GET', 'HEAD'].includes(req.method) || req.path.startsWith('/api/')) return next();
+      try {
+        if (Date.now() - cached.at > 60000) {
+          let host = '';
+          try {
+            host = new URL((await SiteSettings.getSingleton()).siteUrl).hostname.toLowerCase();
+          } catch {
+            host = '';
+          }
+          cached = { at: Date.now(), host };
+        }
+        const want = cached.host;
+        const got = String(req.hostname || '').toLowerCase();
+        if (want && got !== want && (got === `www.${want}` || want === `www.${got}`)) return res.redirect(301, `https://${want}${req.originalUrl}`);
+      } catch {
+        /* never block a visit because of this check */
+      }
+      return next();
+    });
+  }
   app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => req.url.startsWith('/uploads') } }));
   app.use(express.json({ limit: '2mb' }));
 

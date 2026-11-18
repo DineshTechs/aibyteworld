@@ -5,6 +5,7 @@ import { logger } from './config/logger.js';
 import { startAiJobRunner } from './jobs/aiJobRunner.js';
 import { startPublishScheduler } from './jobs/publishScheduler.js';
 import { startGrowthScheduler } from './jobs/growthScheduler.js';
+import { startKeepAlive } from './jobs/keepAlive.js';
 import { startAutopilotScheduler } from './services/autopilot/runner.js';
 import { startTelegramBot } from './services/telegram/bot.js';
 import { SiteSettings } from './models/index.js';
@@ -19,6 +20,7 @@ async function main() {
   const stopAutopilot = startAutopilotScheduler();
   const stopTelegram = startTelegramBot();
   const stopGrowth = startGrowthScheduler();
+  const stopKeepAlive = startKeepAlive();
   const server = createApp().listen(env.PORT, () => {
     logger.info({ port: env.PORT, env: env.NODE_ENV }, `API listening on http://localhost:${env.PORT}`);
   });
@@ -30,6 +32,7 @@ async function main() {
     stopAutopilot();
     stopTelegram();
     stopGrowth();
+    stopKeepAlive();
     server.close(async () => {
       await disconnectDb();
       process.exit(0);

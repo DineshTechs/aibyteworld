@@ -75,13 +75,21 @@ export async function buildRss(base, settings) {
 export async function renderHead(pathname, base) {
   const settings = await SiteSettings.getSingleton();
   const site = settings.siteName;
-  const org = { '@type': 'Organization', name: site, url: `${base}/` };
+  // The site as an organisation, with its logo and social profiles (used by search engines).
+  const sameAs = Object.values(settings.social?.toObject ? settings.social.toObject() : settings.social || {}).filter((u) => /^https?:\/\//.test(u || ''));
+  const org = { '@type': 'Organization', name: site, url: `${base}/`, logo: { '@type': 'ImageObject', url: `${base}/icon-512.png`, width: 512, height: 512 }, ...(sameAs.length ? { sameAs } : {}) };
+  const twitterSite = (String(settings.social?.twitter || '').match(/(?:twitter|x)\.com\/(?:#!\/)?@?([A-Za-z0-9_]{1,15})/) || [])[1] || '';
   const head = {
     status: 200,
     title: settings.tagline ? `${site} – ${settings.tagline}` : site,
-    description: settings.description || '',
+    description: settings.description || settings.tagline || '',
     canonical: `${base}${pathname}`,
-    image: '',
+    // Pages without their own photo are shared with the site's default image.
+    image: `${base}/og-default.png`,
+    imageWidth: 1200,
+    imageHeight: 630,
+    imageAlt: site,
+    twitterSite,
     type: 'website',
     noindex: !settings.allowIndexing,
     ld: [],
@@ -93,7 +101,7 @@ export async function renderHead(pathname, base) {
   let m;
 
   if (path === '/') {
-    head.ld.push({ '@context': 'https://schema.org', '@graph': [{ '@type': 'WebSite', name: site, url: `${base}/`, potentialAction: { '@type': 'SearchAction', target: `${base}/search?q={search_term_string}`, 'query-input': 'required name=search_term_string' } }, org] });
+    head.ld.push({ '@context': 'https://schema.org', '@graph': [{ '@type': 'WebSite', name: site, url: `${base}/`, ...(head.description ? { description: head.description } : {}), inLanguage: 'en', publisher: { '@id': `${base}/#organization` }, potentialAction: { '@type': 'SearchAction', target: `${base}/search?q={search_term_string}`, 'query-input': 'required name=search_term_string' } }, { ...org, '@id': `${base}/#organization` }] });
   } else if (path.startsWith('/admin')) {
     head.title = `Admin | ${site}`;
     head.noindex = true;
@@ -116,10 +124,11 @@ export async function renderHead(pathname, base) {
       ogTitle: a.seo?.ogTitle || a.seo?.title || a.title,
       ogDescription: a.seo?.ogDescription || a.seo?.description || a.excerpt,
       canonical: a.seo?.canonicalUrl || url,
-      image,
-      imageAlt: a.featuredImage?.alt || a.title,
-      imageWidth: a.featuredImage?.width || 0,
-      imageHeight: a.featuredImage?.height || 0,
+      // A post without a cover photo is shared with the site's default image.
+      image: image || head.image,
+      imageAlt: image ? a.featuredImage?.alt || a.title : head.imageAlt,
+      imageWidth: image ? a.featuredImage?.width || 0 : head.imageWidth,
+      imageHeight: image ? a.featuredImage?.height || 0 : head.imageHeight,
       type: 'article',
       noindex: head.noindex || Boolean(a.seo?.noindex),
       publishedTime: a.publishedAt,
@@ -206,6 +215,7 @@ export function headToHtml(h, siteName) {
     h.publishedTime && `<meta property="article:published_time" content="${new Date(h.publishedTime).toISOString()}" />`,
     h.modifiedTime && `<meta property="article:modified_time" content="${new Date(h.modifiedTime).toISOString()}" />`,
     `<meta name="twitter:card" content="${h.image ? 'summary_large_image' : 'summary'}" />`,
+    h.twitterSite && `<meta name="twitter:site" content="@${esc(h.twitterSite)}" />`,
     `<meta name="twitter:title" content="${esc(h.ogTitle || h.title)}" />`,
     h.description && `<meta name="twitter:description" content="${esc(h.ogDescription || h.description)}" />`,
     h.image && `<meta name="twitter:image" content="${esc(h.image)}" />`,

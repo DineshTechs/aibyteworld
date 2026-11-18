@@ -21,9 +21,11 @@ const id = validateIdParam('id');
 const staff = requireRole('admin', 'editor');
 const adminOnly = requireRole('admin');
 
+const startedAt = new Date();
 router.get('/health', (_req, res) => {
   const db = dbState();
-  res.status(db === 'connected' ? 200 : 503).json({ status: db === 'connected' ? 'ok' : 'degraded', db });
+  // startedAt / uptime show whether the host restarted or paused the app.
+  res.status(db === 'connected' ? 200 : 503).json({ status: db === 'connected' ? 'ok' : 'degraded', db, startedAt, uptimeSeconds: Math.round(process.uptime()) });
 });
 
 // ---------- Public (no authentication) ----------

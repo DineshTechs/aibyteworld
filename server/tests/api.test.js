@@ -53,6 +53,24 @@ after(async () => {
 test('health check reports a connected database', async () => {
   const res = await request(app).get('/api/health').expect(200);
   assert.equal(res.body.db, 'connected');
+  assert.ok(res.body.uptimeSeconds >= 0 && res.body.startedAt, 'shows how long the app has been running');
+});
+
+test('site SEO: default share image, logo and social profiles for search engines', async () => {
+  const { renderHead, headToHtml } = await import('../src/services/seoService.js');
+  const { SiteSettings } = await import('../src/models/index.js');
+  await SiteSettings.updateOne({ key: 'site' }, { $set: { siteName: 'AI BYTE WORLD', tagline: 'AI news', description: 'Clear AI news.', 'social.twitter': 'https://x.com/aibyteworld', 'social.linkedin': 'https://www.linkedin.com/company/aibyteworld' } });
+  const head = await renderHead('/', 'https://www.example.org');
+  const html = headToHtml(head, 'AI BYTE WORLD');
+  assert.match(html, /<meta property="og:image" content="https:\/\/www\.example\.org\/og-default\.png" \/>/);
+  assert.match(html, /<meta property="og:image:width" content="1200" \/>/);
+  assert.match(html, /<meta name="twitter:site" content="@aibyteworld" \/>/);
+  const graph = head.ld[0]['@graph'];
+  const org = graph.find((x) => x['@type'] === 'Organization');
+  assert.equal(org.logo.url, 'https://www.example.org/icon-512.png');
+  assert.deepEqual(org.sameAs.sort(), ['https://www.linkedin.com/company/aibyteworld', 'https://x.com/aibyteworld']);
+  assert.equal(graph.find((x) => x['@type'] === 'WebSite').description, 'Clear AI news.');
+  await SiteSettings.updateOne({ key: 'site' }, { $set: { 'social.twitter': '', 'social.linkedin': '', tagline: '', description: '' } });
 });
 
 test('login: rejects bad credentials, accepts good ones', async () => {
