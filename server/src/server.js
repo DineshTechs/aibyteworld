@@ -42,5 +42,8 @@ async function main() {
 
 main().catch((err) => {
   logger.fatal({ err }, `Server failed to start: ${err.message}`);
+  // Also printed plainly, so hosting logs (and logs/app.log) show the reason.
+  // eslint-disable-next-line no-console
+  console.error(`Server failed to start: ${err.message}`);
   process.exit(1);
 });

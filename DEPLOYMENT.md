@@ -17,12 +17,13 @@ In the MilesWeb panel, create a Node.js app from GitHub and choose:
 | Application mode | Production |
 | Domain / URL | `aibyte.world` (no path) |
 | Startup file | `app.js` |
-| Install command (if asked) | `npm install` |
+| Install command (if asked) | `npm ci --omit=dev` (optional: `app.js` installs missing packages itself) |
 | Build command (if asked) | leave empty: the website is already built in `client/dist` |
 | Start command (if asked) | `npm start` |
 
-The install reads the root `package.json` (the server's packages and the `sharp` photo
-optimiser). If the panel has a **Run NPM Install** button instead, click it after the first deploy.
+Packages come from the root `package.json` / `package-lock.json` (the server's packages and the
+`sharp` photo optimiser). If the panel does not install them, `app.js` runs `npm ci` itself on the
+first start of each deploy (about a minute). The app listens on port 3000 unless the host sets `PORT`.
 
 ### If GitHub deploy is not available on your plan
 cPanel → **Git Version Control** can clone the private repository with a deploy key
@@ -30,37 +31,37 @@ cPanel → **Git Version Control** can clone the private repository with a deplo
 `/home/<cpanel-user>/aibyteworld`; then cPanel → **Setup Node.js App** with the values above,
 and **Update from Remote** + **Restart** for each new version.
 
-## 2. Settings: upload `server/.env`
+## 2. Settings and photos: keep them outside the deploy folders
 
-Easiest: with cPanel → **File Manager**, upload your PC's `D:\WebApps\blogSite\server\.env`
-to `/home/<cpanel-user>/aibyteworld/server/.env` and change two lines:
+MilesWeb's GitHub deploys put each version in a new folder, for example
+`/var/www/<site-id>/deploys/<version>`, and run the newest one. Anything stored inside a deploy
+folder is gone after the next deploy, so `app.js` uses the **site folder** above `deploys`:
 
-```
-NODE_ENV=production
-CLIENT_ORIGIN=https://aibyte.world,https://www.aibyte.world
-```
+| What | Where (File Manager) |
+| --- | --- |
+| Settings | `/var/www/<site-id>/.env` |
+| Photos | `/var/www/<site-id>/uploads/` (created automatically) |
+| Start-up log | `/var/www/<site-id>/logs/app.log` |
 
-Keep `MONGODB_URI`, `DB_NAME`, `JWT_SECRET` and especially **`SECRETS_KEY` exactly as they are**:
-`SECRETS_KEY` decrypts the API keys saved in the dashboard. The file is never in Git, and
-redeploys from GitHub do not touch it (if your plan replaces the whole folder on each deploy, enter the values as environment variables instead). (The same values can instead be entered as
-environment variables in the app's settings.)
+1. Upload your PC's `D:\WebApps\blogSite\server\.env` to the site folder as `.env`, and change:
+   ```
+   NODE_ENV=production
+   CLIENT_ORIGIN=https://aibyte.world,https://www.aibyte.world
+   ```
+   Keep `MONGODB_URI`, `DB_NAME`, `JWT_SECRET` and especially **`SECRETS_KEY`** exactly as they are
+   (`SECRETS_KEY` decrypts the API keys saved in the dashboard). Remove the `PORT=` line or leave it:
+   the host's port wins. Instead of the file, the same values can be entered as environment
+   variables in the panel.
+2. Zip your PC's `D:\WebApps\blogSite\server\uploads` folder, upload it and extract its files into
+   `/var/www/<site-id>/uploads/`, so existing posts keep their photos.
+3. MongoDB Atlas → **Network Access** → add the server's IP address (or 0.0.0.0/0).
+4. Restart the app and open https://aibyte.world. If it shows 503, read `logs/app.log`.
 
-MongoDB Atlas → **Network Access** → add the server's IP address (cPanel shows it as
-"Shared IP Address"), or 0.0.0.0/0.
+On hosts without `deploys` folders (plain cPanel), the files stay in the usual places:
+`server/.env` and `server/uploads`. Either can also be set with the `ENV_FILE` and `UPLOAD_DIR`
+environment variables.
 
-Restart the app in the panel and open https://aibyte.world.
-
-## 3. Photos
-
-Photos live in `server/uploads` (not in Git). Upload your PC's
-`D:\WebApps\blogSite\server\uploads` folder once (zip it, upload with File Manager,
-extract) so existing posts keep their photos.
-
-After the first redeploy from GitHub, check that a post's photo still shows. If MilesWeb
-replaces the whole app folder on each deploy, photos would be lost each time: ask MilesWeb
-support to keep `server/uploads` between deploys (a persistent folder), and keep a copy.
-
-## 4. Keep it running (important)
+## 3. Keep it running (important)
 
 Passenger starts the app on the first visit and can stop it when nobody visits, which
 also pauses Autopilot, the newsletter and the Telegram bot. Add a cron job:
@@ -74,7 +75,7 @@ Run **one copy only**: stop the start-dev windows on your PC once the hosted sit
 (both use the same database, and Telegram allows one bot connection). If MilesWeb runs
 several Passenger processes for the app, ask support to limit it to one instance.
 
-## 5. After the first deploy
+## 4. After the first deploy
 
 1. Sign in at https://aibyte.world/admin → Website Settings → **Site URL** = `https://aibyte.world`.
 2. Google Search Console and Bing Webmaster Tools: paste the verification codes in Website

@@ -6,7 +6,8 @@ import { z } from 'zod';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const SERVER_ROOT = path.resolve(__dirname, '..', '..');
 
-dotenv.config({ path: path.join(SERVER_ROOT, '.env') });
+// ENV_FILE lets a host keep the settings file outside the deployed folder.
+dotenv.config({ path: process.env.ENV_FILE || path.join(SERVER_ROOT, '.env') });
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -51,7 +52,8 @@ if (!parsed.success) {
 export const env = {
   ...parsed.data,
   clientOrigins: parsed.data.CLIENT_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean),
-  uploadDir: path.join(SERVER_ROOT, 'uploads'),
+  // UPLOAD_DIR lets a host keep photos in a folder that survives redeploys.
+  uploadDir: process.env.UPLOAD_DIR ? path.resolve(process.env.UPLOAD_DIR) : path.join(SERVER_ROOT, 'uploads'),
   isProd: parsed.data.NODE_ENV === 'production',
   isTest: parsed.data.NODE_ENV === 'test',
 };
