@@ -4,6 +4,8 @@ dist/
 !client/dist/
 .env
 logs/
+# Photos: the ones from this PC are added on purpose by push-to-github.bat;
+# new photos saved on the live server stay out of Git.
 server/uploads/*
 !server/uploads/.gitkeep
 *.log

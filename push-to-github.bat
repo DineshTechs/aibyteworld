@@ -34,6 +34,9 @@ if not exist client\dist\index.html (echo Website build is missing. Nothing was 
 
 rem Commit any later changes.
 git add -A
+rem Photos used by posts go to GitHub too, so the hosted site has them. They stay
+rem listed in .gitignore, so photos saved on the live server are never removed by a redeploy.
+git add -f server/uploads
 git diff --cached --quiet || git -c user.name="DineshTechs" -c user.email="DineshTechs@users.noreply.github.com" commit -q -m "Update from %COMPUTERNAME% %DATE% %TIME%"
 
 git remote get-url origin >nul 2>&1 && git remote set-url origin %REPO% || git remote add origin %REPO%

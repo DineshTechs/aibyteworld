@@ -52,8 +52,8 @@ folder is gone after the next deploy, so `app.js` uses the **site folder** above
    (`SECRETS_KEY` decrypts the API keys saved in the dashboard). Remove the `PORT=` line or leave it:
    the host's port wins. Instead of the file, the same values can be entered as environment
    variables in the panel.
-2. Zip your PC's `D:\WebApps\blogSite\server\uploads` folder, upload it and extract its files into
-   `/var/www/<site-id>/uploads/`, so existing posts keep their photos.
+2. Photos from your PC are pushed to GitHub by `push-to-github.bat` and arrive in `server/uploads`
+   with each deploy. (With per-version deploy folders, copy them once into `/var/www/<site-id>/uploads/`.)
 3. MongoDB Atlas → **Network Access** → add the server's IP address (or 0.0.0.0/0).
 4. Restart the app and open https://aibyte.world. If it shows 503, read `logs/app.log`.
 
