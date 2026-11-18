@@ -4,7 +4,14 @@ import { PageHeader } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { useUi } from '../../context/UiContext';
 import { api, errorMessage } from '../../services/api';
-import type { User } from '../../types';
+import type { AuthorLinks, User } from '../../types';
+
+const LINK_FIELDS: [keyof AuthorLinks, string, string][] = [
+  ['website', 'Website', 'https://example.com'],
+  ['linkedin', 'LinkedIn', 'https://www.linkedin.com/in/…'],
+  ['twitter', 'X (Twitter)', 'https://x.com/…'],
+  ['github', 'GitHub', 'https://github.com/…'],
+];
 
 export default function ProfilePage() {
   const { user, setUser, setSession } = useAuth();
@@ -12,6 +19,8 @@ export default function ProfilePage() {
   const [name, setName] = useState(user?.name || '');
   const [bio, setBio] = useState(user?.bio || '');
   const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl || '');
+  const [jobTitle, setJobTitle] = useState(user?.jobTitle || '');
+  const [links, setLinks] = useState<AuthorLinks>({ website: '', linkedin: '', twitter: '', github: '', ...(user?.links || {}) });
   const [pick, setPick] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -22,7 +31,7 @@ export default function ProfilePage() {
     e.preventDefault();
     setBusy('profile');
     try {
-      const r = await api.put<{ user: User }>('/auth/profile', { name, bio, avatarUrl });
+      const r = await api.put<{ user: User }>('/auth/profile', { name, bio, avatarUrl, jobTitle, links });
       setUser(r.user);
       toast('Profile saved');
     } catch (err) {
@@ -79,11 +88,37 @@ export default function ProfilePage() {
             <input id="p-name" required maxLength={80} className="input" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div>
+            <label htmlFor="p-job" className="label">
+              Job title
+            </label>
+            <input id="p-job" maxLength={100} className="input" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} placeholder="e.g. Blockchain developer" />
+          </div>
+          <div>
             <label htmlFor="p-bio" className="label">
               Bio
             </label>
             <textarea id="p-bio" rows={4} maxLength={1000} className="input" value={bio} onChange={(e) => setBio(e.target.value)} />
+            <p className="mt-1 text-xs text-stone-500">Shown on your author page and under every post you write.</p>
           </div>
+          <fieldset className="grid gap-3 sm:grid-cols-2">
+            <legend className="label">Profile links (optional)</legend>
+            {LINK_FIELDS.map(([k, label, ph]) => (
+              <div key={k}>
+                <label htmlFor={`p-${k}`} className="text-xs text-stone-500">
+                  {label}
+                </label>
+                <input id={`p-${k}`} type="url" maxLength={300} className="input" value={links[k]} placeholder={ph} onChange={(e) => setLinks({ ...links, [k]: e.target.value.trim() })} />
+              </div>
+            ))}
+          </fieldset>
+          {user && (
+            <p className="text-xs text-stone-500">
+              Your public page:{' '}
+              <a href={`/author/${user.id}`} target="_blank" rel="noopener noreferrer" className="text-brand-700 hover:underline dark:text-brand-300">
+                /author/{user.id}
+              </a>
+            </p>
+          )}
           <button type="submit" className="btn btn-primary" disabled={busy === 'profile'}>
             {busy === 'profile' ? 'Saving…' : 'Save profile'}
           </button>

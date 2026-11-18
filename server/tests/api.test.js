@@ -59,6 +59,7 @@ test('health check reports a connected database', async () => {
 test('site SEO: default share image, logo and social profiles for search engines', async () => {
   const { renderHead, headToHtml } = await import('../src/services/seoService.js');
   const { SiteSettings } = await import('../src/models/index.js');
+  await SiteSettings.getSingleton(); // a fresh test database has no settings yet
   await SiteSettings.updateOne({ key: 'site' }, { $set: { siteName: 'AI BYTE WORLD', tagline: 'AI news', description: 'Clear AI news.', 'social.twitter': 'https://x.com/aibyteworld', 'social.linkedin': 'https://www.linkedin.com/company/aibyteworld' } });
   const head = await renderHead('/', 'https://www.example.org');
   const html = headToHtml(head, 'AI BYTE WORLD');
@@ -403,6 +404,50 @@ test('change password rotates the token; activity log records actions', async ()
   const stats = await request(app).get('/api/admin/stats').set(as('admin')).expect(200);
   assert.equal(stats.body.published, 2);
   assert.equal(stats.body.manual, stats.body.total);
+});
+
+test('author profile: job title and links on the author page, posts and search data', async () => {
+  // Its own account: earlier tests deactivate the shared "author" user.
+  await User.create({ name: 'Profile author', email: 'profile@example.test', role: 'author', passwordHash: await bcrypt.hash(PASSWORD, 4) });
+  const login = await request(app).post('/api/auth/login').send({ email: 'profile@example.test', password: PASSWORD }).expect(200);
+  const me = { Authorization: `Bearer ${login.body.token}` };
+  const authorId = String(login.body.user.id);
+  await request(app).put('/api/auth/profile').set(me).send({ name: 'Test author', links: { linkedin: 'javascript:alert(1)' } }).expect(400);
+  const saved = await request(app)
+    .put('/api/auth/profile')
+    .set(me)
+    .send({ name: 'Dinesh Gola', bio: 'Blockchain developer who writes about AI.', avatarUrl: '', jobTitle: 'Blockchain & crypto developer', links: { linkedin: 'https://www.linkedin.com/in/example', github: 'https://github.com/example' } })
+    .expect(200);
+  assert.equal(saved.body.user.jobTitle, 'Blockchain & crypto developer');
+  // An older admin page that sends only name/bio/photo keeps the other fields.
+  await request(app).put('/api/auth/profile').set(me).send({ name: 'Dinesh Gola', bio: 'Blockchain developer who writes about AI.', avatarUrl: '' }).expect(200);
+  const pub = await request(app).get(`/api/public/authors/${authorId}`).expect(200);
+  assert.equal(pub.body.author.jobTitle, 'Blockchain & crypto developer');
+  assert.equal(pub.body.author.links.github, 'https://github.com/example');
+  assert.equal(pub.body.author.email, undefined, 'email is never public');
+  const { renderHead, headToHtml } = await import('../src/services/seoService.js');
+  const head = await renderHead(`/author/${authorId}`, 'https://blog.example.test');
+  const page = head.ld.find((x) => x['@type'] === 'ProfilePage');
+  assert.equal(page.mainEntity.name, 'Dinesh Gola');
+  assert.equal(page.mainEntity.jobTitle, 'Blockchain & crypto developer');
+  assert.deepEqual(page.mainEntity.sameAs, ['https://www.linkedin.com/in/example', 'https://github.com/example']);
+  assert.match(headToHtml(head, 'Test Blog'), /og:type" content="profile"/);
+});
+
+test('wording clean-up removes stock AI phrases without touching links, citations or numbers', async () => {
+  const { polishWording, findAiPhrases } = await import('../src/utils/writingQuality.js');
+  const html =
+    '<p>In today\'s fast-paced world, firms utilize AI. It\'s important to note that 42% of firms <a href="/blog/delve-into-data">delve into</a> data [F1].</p>' +
+    '<p>Moreover, this seamless tool plays a crucial role in growth — it will revolutionize work — fast — really.</p><h2>In conclusion, what to do</h2><p>Margin traders use leverage.</p>';
+  const { html: out, changes } = polishWording(html);
+  assert.ok(changes > 0);
+  assert.deepEqual(findAiPhrases(out.replace(/<[^>]+>/g, ' ')), []);
+  assert.match(out, /<p>Firms use AI\. 42% of firms <a href="\/blog\/delve-into-data">look at<\/a> data \[F1\]\.<\/p>/);
+  assert.match(out, /Also, this smooth tool is central to growth/);
+  assert.match(out, /<h2>What to do<\/h2>/);
+  assert.match(out, /Margin traders use leverage\./, 'real terms such as trading leverage are kept');
+  assert.equal((out.match(/—/g) || []).length, 1, 'em dashes limited');
+  assert.equal(polishWording('<p>Moreover, x</p>', 'Hindi').html, '<p>Moreover, x</p>', 'other languages untouched');
 });
 
 test('unknown routes return JSON 404', async () => {

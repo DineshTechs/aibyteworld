@@ -1,10 +1,11 @@
 import { useParams, useSearchParams } from 'react-router-dom';
 import { ArticleCard } from '../../components/ArticleCard';
+import { AuthorLinks } from '../../components/AuthorLinks';
 import { Seo } from '../../components/Seo';
 import { EmptyState, ErrorState, Pagination, Spinner } from '../../components/ui';
 import { useFetch } from '../../hooks/useFetch';
 import { api, qs } from '../../services/api';
-import type { ArticleCardData, Paged } from '../../types';
+import type { ArticleCardData, AuthorLinks as Links, Paged } from '../../types';
 import NotFoundPage from './NotFoundPage';
 
 interface AuthorInfo {
@@ -12,6 +13,8 @@ interface AuthorInfo {
   name: string;
   bio: string;
   avatarUrl: string;
+  jobTitle?: string;
+  links?: Partial<Links>;
   articleCount: number;
 }
 
@@ -32,7 +35,7 @@ export default function AuthorPage() {
       <Seo title={a.name} description={a.bio || `Articles by ${a.name}`} />
       <header className="card mb-10 flex flex-col items-center gap-5 p-8 text-center sm:flex-row sm:text-left">
         {a.avatarUrl ? (
-          <img src={a.avatarUrl} alt="" className="h-24 w-24 rounded-full object-cover" />
+          <img src={a.avatarUrl} alt={a.name} className="h-24 w-24 rounded-full object-cover" />
         ) : (
           <div className="flex h-24 w-24 items-center justify-center rounded-full bg-brand-100 font-serif text-4xl text-brand-700 dark:bg-brand-900/40 dark:text-brand-300" aria-hidden>
             {a.name.charAt(0).toUpperCase()}
@@ -41,7 +44,9 @@ export default function AuthorPage() {
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-brand-700 dark:text-brand-300">Author</p>
           <h1 className="mt-1 text-3xl font-semibold text-stone-900 dark:text-stone-50">{a.name}</h1>
-          {a.bio && <p className="mt-2 max-w-2xl text-stone-600 dark:text-stone-400">{a.bio}</p>}
+          {a.jobTitle && <p className="mt-1 font-medium text-stone-700 dark:text-stone-300">{a.jobTitle}</p>}
+          {a.bio && <p className="mt-2 max-w-2xl whitespace-pre-line text-stone-600 dark:text-stone-400">{a.bio}</p>}
+          <AuthorLinks links={a.links} className="mt-3 justify-center sm:justify-start" />
           <p className="mt-2 text-sm text-stone-500">
             {a.articleCount} published {a.articleCount === 1 ? 'article' : 'articles'}
           </p>

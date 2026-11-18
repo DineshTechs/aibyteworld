@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { signToken } from '../middleware/auth.js';
 import { User } from '../models/index.js';
+import { publicLinks } from '../models/User.js';
 import { logActivity } from '../services/activityService.js';
 import { plainText } from '../utils/content.js';
 import { asyncHandler, badRequest, unauthorized } from '../utils/http.js';
@@ -18,10 +19,27 @@ export const changePasswordSchema = z.object({
   newPassword: passwordRule,
 });
 
+const profileLink = z
+  .string()
+  .trim()
+  .max(300)
+  .refine((v) => v === '' || /^https:\/\/[^\s<>"]+$/i.test(v), 'Profile links must start with https://')
+  .default('');
+
 export const profileSchema = z.object({
   name: z.string().trim().min(1).max(80),
   bio: z.string().max(1000).default(''),
   avatarUrl: z.string().max(500).regex(/^($|\/uploads\/|https?:\/\/)/, 'Must be an uploaded image or http(s) URL').default(''),
+  jobTitle: z.string().trim().max(100).optional(),
+  links: z
+    .object({
+      website: profileLink,
+      linkedin: profileLink,
+      twitter: profileLink,
+      github: profileLink,
+    })
+    .partial()
+    .optional(),
 });
 
 // A fixed hash so that unknown emails take as long as wrong passwords.
@@ -50,6 +68,9 @@ export const updateProfile = asyncHandler(async (req, res) => {
   req.user.name = plainText(req.body.name) || req.user.name;
   req.user.bio = plainText(req.body.bio);
   req.user.avatarUrl = req.body.avatarUrl;
+  // Older admin pages do not send these; keep the saved values then.
+  if (req.body.jobTitle !== undefined) req.user.jobTitle = plainText(req.body.jobTitle);
+  if (req.body.links) req.user.links = { ...publicLinks(req.user.links), ...req.body.links };
   await req.user.save();
   res.json({ user: req.user.toSafe() });
 });

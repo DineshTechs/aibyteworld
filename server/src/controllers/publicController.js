@@ -153,7 +153,7 @@ export const getArticle = asyncHandler(async (req, res) => {
   // so bots, previews and repeat visits do not inflate them.
   const article = await Article.findOne({ ...visible(), slug: String(req.params.slug).toLowerCase() })
     .select('-contentText -history -sources -refresh -shares')
-    .populate([{ path: 'author', select: 'name avatarUrl bio' }, POPULATE[1], POPULATE[2]])
+    .populate([{ path: 'author', select: 'name avatarUrl bio jobTitle links' }, POPULATE[1], POPULATE[2]])
     .lean();
   if (!article) throw notFound('Article not found');
 

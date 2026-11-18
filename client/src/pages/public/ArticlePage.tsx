@@ -1,4 +1,5 @@
 import DOMPurify from 'dompurify';
+import { AuthorLinks } from '../../components/AuthorLinks';
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArticleCard, ArticleMeta, ArticleRow, srcSetOf } from '../../components/ArticleCard';
@@ -312,7 +313,9 @@ export default function ArticlePage() {
                   <Link to={`/author/${article.author._id}`} className="font-serif text-lg font-semibold text-stone-900 hover:text-brand-700 dark:text-stone-50">
                     {article.author.name}
                   </Link>
+                  {article.author.jobTitle && <p className="text-sm font-medium text-stone-700 dark:text-stone-300">{article.author.jobTitle}</p>}
                   {article.author.bio && <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">{article.author.bio}</p>}
+                  <AuthorLinks links={article.author.links} className="mt-2" />
                 </div>
               </aside>
             )}

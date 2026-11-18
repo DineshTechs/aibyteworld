@@ -17,11 +17,13 @@ export function siteBase(req, settings) {
 const absUrl = (base, u) => (!u ? '' : /^https?:\/\//i.test(u) ? u : `${base}${u.startsWith('/') ? '' : '/'}${u}`);
 
 export async function buildSitemap(base) {
-  const [articles, catIds, tagIds] = await Promise.all([
+  const [articles, catIds, tagIds, authorIds] = await Promise.all([
     Article.find({ ...visible(), 'seo.noindex': { $ne: true } }).select('slug updatedAt publishedAt featuredImage.url language translationOf').sort({ publishedAt: -1 }).limit(45000).lean(),
     Article.distinct('categories', visible()),
     Article.distinct('tags', visible()),
+    Article.distinct('author', visible()),
   ]);
+  const authors = await User.find({ _id: { $in: authorIds }, active: true }).select('_id updatedAt').lean();
   const [cats, tags] = await Promise.all([Category.find({ _id: { $in: catIds } }).select('slug updatedAt').lean(), Tag.find({ _id: { $in: tagIds } }).select('slug updatedAt').lean()]);
   const latest = articles[0]?.updatedAt;
   // Language versions of the same post list each other (hreflang).
@@ -45,6 +47,7 @@ export async function buildSitemap(base) {
     ...['/about', '/contact', '/privacy', '/terms'].map((p) => url(p, null, '0.3')),
     ...cats.map((c) => url(`/category/${c.slug}`, c.updatedAt, '0.6')),
     ...tags.map((t) => url(`/tag/${t.slug}`, t.updatedAt, '0.4')),
+    ...authors.map((u) => url(`/author/${u._id}`, u.updatedAt, '0.4')),
     ...articles.map((a) => url(`/blog/${a.slug}`, a.updatedAt, '0.7', absUrl(base, a.featuredImage?.url), alternates(a))),
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${entries.join('\n')}\n</urlset>\n`;
@@ -72,6 +75,18 @@ export async function buildRss(base, settings) {
 }
 
 // Works out the head tags and HTTP status for a public URL.
+// The author as schema.org Person: name, page, job title and profile links.
+function personLd(u, base) {
+  const sameAs = Object.values(u.links || {}).filter((v) => typeof v === 'string' && /^https:\/\//.test(v));
+  return {
+    '@type': 'Person',
+    name: u.name,
+    url: `${base}/author/${u._id}`,
+    ...(u.jobTitle ? { jobTitle: u.jobTitle } : {}),
+    ...(sameAs.length ? { sameAs } : {}),
+  };
+}
+
 export async function renderHead(pathname, base) {
   const settings = await SiteSettings.getSingleton();
   const site = settings.siteName;
@@ -114,7 +129,7 @@ export async function renderHead(pathname, base) {
   } else if (path === '/blog') {
     head.title = `Blog | ${site}`;
   } else if ((m = path.match(/^\/blog\/([a-z0-9-]+)$/))) {
-    const a = await Article.findOne({ ...visible(), slug: m[1] }).populate('author', 'name').populate('categories', 'name slug').lean();
+    const a = await Article.findOne({ ...visible(), slug: m[1] }).populate('author', 'name jobTitle links').populate('categories', 'name slug').lean();
     if (!a) return { ...head, status: 404, title: `Page not found | ${site}`, noindex: true, ld: [] };
     const url = `${base}/blog/${a.slug}`;
     const image = absUrl(base, a.featuredImage?.url);
@@ -154,7 +169,7 @@ export async function renderHead(pathname, base) {
         ...(image ? { image: [image] } : {}),
         datePublished: a.publishedAt,
         dateModified: a.updatedAt,
-        ...(a.author ? { author: { '@type': 'Person', name: a.author.name, url: `${base}/author/${a.author._id}` } } : {}),
+        ...(a.author ? { author: personLd(a.author, base) } : {}),
         publisher: org,
         mainEntityOfPage: url,
         ...(a.seo?.focusKeyword ? { keywords: head.keywords } : {}),
@@ -183,8 +198,16 @@ export async function renderHead(pathname, base) {
     const u = await User.findOne({ _id: m[1], active: true }).lean();
     if (!u) return { ...head, status: 404, title: `Page not found | ${site}`, noindex: true, ld: [] };
     head.title = `${u.name} | ${site}`;
-    head.description = u.bio || `Articles by ${u.name}.`;
-    head.ld.push({ '@context': 'https://schema.org', '@type': 'Person', name: u.name, url: `${base}/author/${u._id}` });
+    head.description = (u.bio || `Articles by ${u.name}.`).slice(0, 300);
+    head.type = 'profile';
+    const photo = absUrl(base, u.avatarUrl);
+    if (photo) Object.assign(head, { image: photo, imageAlt: u.name, imageWidth: 0, imageHeight: 0 });
+    head.ld.push({
+      '@context': 'https://schema.org',
+      '@type': 'ProfilePage',
+      url: `${base}/author/${u._id}`,
+      mainEntity: { ...personLd(u, base), ...(u.bio ? { description: u.bio } : {}), ...(photo ? { image: photo } : {}) },
+    });
   } else if (['/about', '/contact', '/privacy', '/terms'].includes(path)) {
     head.title = `${{ '/about': 'About Us', '/contact': 'Contact Us', '/privacy': 'Privacy Policy', '/terms': 'Terms and Conditions' }[path]} | ${site}`;
   } else {

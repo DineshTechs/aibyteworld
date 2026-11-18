@@ -8,6 +8,8 @@ export interface User {
   role: Role;
   bio: string;
   avatarUrl: string;
+  jobTitle?: string;
+  links?: AuthorLinks;
   active: boolean;
   lastLoginAt?: string;
   createdAt: string;
@@ -28,11 +30,20 @@ export interface Tag extends Ref {
   articleCount?: number;
 }
 
+export interface AuthorLinks {
+  website: string;
+  linkedin: string;
+  twitter: string;
+  github: string;
+}
+
 export interface AuthorRef {
   _id: string;
   name: string;
   avatarUrl?: string;
   bio?: string;
+  jobTitle?: string;
+  links?: Partial<AuthorLinks>;
 }
 
 export interface FeaturedImage {

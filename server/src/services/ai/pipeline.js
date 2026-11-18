@@ -9,7 +9,7 @@ import { extractPageMeta, safeFetch } from '../../utils/safeFetch.js';
 import { logActivity } from '../activityService.js';
 import { applyCitations } from './citations.js';
 import { analysisPrompt, editingPrompt, planningPrompt, researchPrompt, seoPrompt, verificationPrompt, writingPrompt, factFixPrompt } from './prompts.js';
-import { extractFaq, findAiPhrases, newNumbers, readability } from '../../utils/writingQuality.js';
+import { extractFaq, findAiPhrases, newNumbers, polishWording, readability } from '../../utils/writingQuality.js';
 import { providerChain } from './providerService.js';
 import { runWithFailover } from './routing.js';
 import { applyFactFixes, factFixSchema, findUncited } from './factFix.js';
@@ -569,7 +569,10 @@ export async function runPipeline(jobId) {
   };
 
   // Applies citations to the final draft and records quality measures.
-  async function finalizeDraft(sourceHtml) {
+  async function finalizeDraft(draftHtml) {
+    // Swap stock "AI" phrases for plain wording before citations are applied.
+    const polished = polishWording(draftHtml, job.input.language);
+    const sourceHtml = polished.html;
     const sources = new Map((await ResearchSource.find({ job: job._id }).lean()).map((x) => [String(x._id), x]));
     const { html, usedFindings, usedSourceIds, warnings } = applyCitations(sourceHtml, job.findings, sources);
     job.findings.forEach((f) => {

@@ -5,7 +5,7 @@ import { htmlToText } from './content.js';
 export const AI_PHRASES = [
   'delve', 'delves', 'delving', "in today's fast-paced", "in today's digital", 'ever-evolving', 'ever-changing',
   'tapestry', 'realm', 'game-changer', 'game changer', 'unlock the power', 'unlock the potential', 'harness the power',
-  'seamless', 'seamlessly', 'leverage', 'leveraging', 'elevate', 'embark', 'navigate the', 'navigating the',
+  'seamless', 'seamlessly', 'leveraging', 'elevate', 'embark', 'navigate the', 'navigating the',
   "it's important to note", 'it is important to note', "it's worth noting", 'it is worth noting', 'in conclusion',
   'in summary', 'furthermore', 'moreover', 'cutting-edge', 'revolutionize', 'revolutionise', 'transformative',
   'a testament to', 'plays a crucial role', 'plays a pivotal role', 'pivotal', 'paramount', 'look no further',
@@ -77,4 +77,105 @@ export function extractFaq(html) {
     if (question.length > 5 && answer.length > 10) out.push({ question, answer });
   }
   return out;
+}
+
+// ---------- Automatic wording clean-up ----------
+// Safe, meaning-preserving swaps for stock phrases that models overuse and
+// readers recognise as machine-written. Runs on the text between HTML tags
+// only, so links, tags and [F#] citation markers are never touched. Numbers,
+// names and claims are not changed. English only.
+const SWAPS = [
+  // Openers and fillers that add nothing: dropped, next word capitalised.
+  [/\b(?:in today's|in today’s) (?:fast-paced|digital|ever-changing|ever-evolving|modern) (?:world|age|era|landscape),?\s*/gi, ''],
+  [/\bit(?:'s| is) (?:important|worth|crucial) (?:to note|noting|to remember|remembering) that\s+/gi, ''],
+  [/\bit(?:'s| is) (?:important|worth|crucial) (?:to note|noting)[,:]?\s+/gi, ''],
+  [/\b(?:in conclusion|in summary|to sum up|all in all|ultimately),\s*/gi, ''],
+  [/\b(?:furthermore|moreover|additionally),\s*/gi, 'also, '],
+  [/\bat the end of the day,\s*/gi, ''],
+  // Word swaps.
+  [/\bdelv(?:e|ing) (?:deep(?:er)? )?into\b/gi, (m) => (/ing/i.test(m) ? 'looking at' : 'look at')],
+  [/\bdelves (?:deep(?:er)? )?into\b/gi, 'looks at'],
+  [/\b(?:take a )?deep dive into\b/gi, 'close look at'],
+  [/\bdive into\b/gi, 'get into'],
+  [/\butili[sz](?:e|es|ed|ing)\b/gi, (m) => ({ e: 'use', es: 'uses', ed: 'used', ing: 'using' })[m.toLowerCase().replace(/^utili[sz]/, '')] || 'use'],
+  [/\butili[sz]ation\b/gi, 'use'],
+  [/\bseamlessly\b/gi, 'smoothly'],
+  [/\bseamless\b/gi, 'smooth'],
+  [/\bcutting-edge\b/gi, 'latest'],
+  [/\bgame[- ]changer\b/gi, 'big shift'],
+  [/\brevolutioni[sz]e\b/gi, 'change'],
+  [/\brevolutioni[sz]es\b/gi, 'changes'],
+  [/\brevolutioni[sz]ing\b/gi, 'changing'],
+  [/\bplays an? (?:crucial|pivotal|vital|key|significant) role in\b/gi, 'is central to'],
+  [/\bunlock(?:s|ing)? the (?:full )?(?:power|potential) of\b/gi, (m) => (/ing/i.test(m) ? 'getting the most from' : /unlocks/i.test(m) ? 'gets the most from' : 'get the most from')],
+  [/\bharness(?:es|ing)? the power of\b/gi, (m) => (/ing/i.test(m) ? 'using' : /es\b/i.test(m.split(' ')[0]) ? 'uses' : 'use')],
+  [/\bnavigat(?:e|ing) the (?:complexities|complex world|world|landscape) of\b/gi, (m) => (/ing/i.test(m) ? 'dealing with' : 'deal with')],
+  [/\b(?:the )?ever-(?:evolving|changing) (?:landscape|world) of\b/gi, 'the fast-moving world of'],
+  [/\bever-evolving\b/gi, 'fast-moving'],
+  [/\bin the realm of\b/gi, 'in'],
+  [/\ba testament to\b/gi, 'proof of'],
+  [/\bparamount\b/gi, 'essential'],
+  [/\bunparalleled\b/gi, 'unmatched'],
+  [/\bmeticulous(ly)?\b/gi, (m) => (/ly$/i.test(m) ? 'carefully' : 'careful')],
+  [/\bholistic\b/gi, 'complete'],
+  [/\bembark(?:s|ed|ing)? on\b/gi, (m) => (/ing/i.test(m) ? 'starting' : /ed\b/i.test(m) ? 'started' : /s\b/i.test(m.split(' ')[0]) ? 'starts' : 'start')],
+  [/\blook no further\.?\s*/gi, ''],
+];
+
+function matchCase(original, replacement) {
+  if (!replacement) return replacement;
+  return /^[A-Z]/.test(original) ? replacement.charAt(0).toUpperCase() + replacement.slice(1) : replacement;
+}
+
+function polishText(text) {
+  let t = text;
+  for (const [re, rep] of SWAPS) {
+    t = t.replace(re, (m, ...args) => {
+      const r = typeof rep === 'function' ? rep(m, ...args) : rep;
+      return matchCase(m, r);
+    });
+  }
+  // A removed opener can leave a lower-case letter at a sentence start.
+  t = t.replace(/([.!?]\s+)([a-z])/g, (_m, p, c) => p + c.toUpperCase());
+  return t;
+}
+
+/**
+ * Cleans overused phrases out of article HTML and limits em dashes (a
+ * well-known sign of machine text) to about one per 250 words.
+ * Returns { html, changes } where changes counts the edits made.
+ */
+export function polishWording(html, language = 'English') {
+  const src = String(html || '');
+  if (!/^english$/i.test(language || 'English')) return { html: src, changes: 0 };
+  const parts = src.split(/(<[^>]+>)/);
+  let changes = 0;
+  const words = htmlToText(src).split(/\s+/).length;
+  let dashesLeft = Math.max(1, Math.floor(words / 250));
+  // Text right after an opening block tag starts a sentence.
+  let atStart = true;
+  const out = parts.map((part) => {
+    if (part.startsWith('<')) {
+      if (/^<(?:p|li|h[1-6]|td|th|blockquote)\b/i.test(part)) atStart = true;
+      return part;
+    }
+    if (!part.trim()) return part;
+    const original = part;
+    let t = polishText(part);
+    // Only re-capitalise where a removed opener left the sentence start in lower case.
+    if (atStart && /^\s*[A-Z]/.test(original) && /^\s*[a-z]/.test(t)) t = t.replace(/^(\s*)([a-z])/, (_m, sp, c) => sp + c.toUpperCase());
+    else if (atStart && t !== original && /^\s*[a-z]/.test(t) && !/^\s*[a-z]/.test(original)) t = t.replace(/^(\s*)([a-z])/, (_m, sp, c) => sp + c.toUpperCase());
+    // Em dashes: keep a few, turn the rest into commas.
+    t = t.replace(/\s*—\s*/g, (m) => {
+      if (dashesLeft > 0) {
+        dashesLeft -= 1;
+        return m;
+      }
+      return ', ';
+    });
+    if (t !== original) changes += 1;
+    atStart = false;
+    return t;
+  });
+  return { html: out.join(''), changes };
 }
