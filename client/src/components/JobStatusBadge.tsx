@@ -1,0 +1,14 @@
+import type { JobStatus } from '../types';
+
+const STYLE: Record<JobStatus, [string, string]> = {
+  queued: ['Queued', 'bg-stone-200 text-stone-700 dark:bg-stone-800 dark:text-stone-300'],
+  running: ['Running', 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200'],
+  completed: ['Completed', 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200'],
+  failed: ['Failed', 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200'],
+  cancelled: ['Cancelled', 'bg-stone-300 text-stone-700 dark:bg-stone-700 dark:text-stone-200'],
+};
+
+export function JobStatusBadge({ status }: { status: JobStatus }) {
+  const [label, cls] = STYLE[status];
+  return <span className={`badge ${cls}`}>{label}</span>;
+}

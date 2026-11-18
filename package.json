@@ -1,0 +1,12 @@
+{
+  "name": "aibyte-world",
+  "private": true,
+  "description": "AI blogging platform for aibyte.world (API + website in one Node.js app)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm ci --prefix server --omit=dev && npm ci --prefix client && npm run build --prefix client",
+    "start": "NODE_ENV=production node server/src/server.js"
+  }
+}
