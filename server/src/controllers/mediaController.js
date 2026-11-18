@@ -1,18 +1,14 @@
 import { z } from 'zod';
 import { isStaffEditor } from '../middleware/auth.js';
 import { removeUploadedFile, verifyImageSignature } from '../middleware/upload.js';
-import { Media, SiteSettings } from '../models/index.js';
+import { Media } from '../models/index.js';
+import { SpinError, findNewCover } from '../services/images/coverSpin.js';
 import { logActivity } from '../services/activityService.js';
 import { optimizeMedia } from '../services/images/optimize.js';
 import { imageSize } from '../integrations/images/common.js';
 import fs from 'node:fs';
 import { plainText } from '../utils/content.js';
 import { asyncHandler, badRequest, forbidden, notFound, paged, parsePaging } from '../utils/http.js';
-import { providerChain } from '../services/ai/providerService.js';
-import { spinCoverPhoto } from '../services/images/imageService.js';
-import { AiError } from '../integrations/ai/errors.js';
-import { publicBase } from '../services/growth/common.js';
-import { makeSlug } from '../utils/content.js';
 
 export const mediaUpdateSchema = z.object({ alt: z.string().max(300) });
 
@@ -77,24 +73,12 @@ export const spinSchema = z.object({
 });
 
 export const spinCover = asyncHandler(async (req, res) => {
-  const site = await SiteSettings.getSingleton();
-  if (!site.ai?.imagesEnabled) throw badRequest('Photos are turned off in AI Providers.');
-  const { chain, skipped } = await providerChain(site.ai, 'image');
-  if (!chain.length) throw badRequest(`No photo library is set up. ${skipped.slice(0, 2).join('; ') || 'Add a free Unsplash, Pexels or Pixabay key in AI Providers.'}`);
   try {
-    const photo = await spinCoverPhoto({
-      chain,
-      title: req.body.title,
-      keyword: req.body.keyword,
-      turn: req.body.turn,
-      appName: makeSlug(site.siteName || 'blog') || 'blog',
-      contact: publicBase(site.siteUrl) || site.contactEmail || '',
-      uploadedBy: req.user._id,
-    });
+    const photo = await findNewCover({ title: req.body.title, keyword: req.body.keyword, turn: req.body.turn, uploadedBy: req.user._id });
     await logActivity(req, 'media.spin', { entityType: 'Media', entityId: photo.media, summary: `New cover photo from ${photo.provider} (search: ${photo.query})` });
     res.json({ photo: { url: photo.url, alt: photo.alt, credit: photo.credit, provider: photo.provider, query: photo.query } });
   } catch (err) {
-    if (err instanceof AiError) throw badRequest(err.message.slice(0, 500));
+    if (err instanceof SpinError) throw badRequest(err.message);
     throw err;
   }
 });

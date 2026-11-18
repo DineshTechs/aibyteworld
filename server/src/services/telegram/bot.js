@@ -11,6 +11,7 @@ import { startAutopilotPost } from '../autopilot/runner.js';
 import { nextRunTime } from '../autopilot/schedule.js';
 import { afterPublish } from '../publishHooks.js';
 import { applyRefresh, discardRefresh } from '../refresh/refreshService.js';
+import { SpinError, replaceArticleCover } from '../images/coverSpin.js';
 
 // Telegram bot: sends notifications, lets linked admins approve or reject
 // posts with buttons, and answers a few commands. It polls Telegram for
@@ -49,9 +50,33 @@ async function articleButtons(article) {
       { text: '↩️ Reject (back to draft)', callback_data: `r:${article._id}` },
     ],
   ];
+  rows.push([{ text: article.featuredImage?.url ? '🔄 New photo' : '🖼 Find a photo', callback_data: `p:${article._id}` }]);
   const base = await publicBase();
   if (base) rows.push([{ text: 'Open in admin', url: `${base}/admin/articles/${article._id}/edit` }]);
   return rows;
+}
+
+// Buttons for a post that is not waiting for approval (for example one
+// Autopilot published): read it, change its photo, open it in the admin.
+async function liveButtons(article) {
+  const base = await publicBase();
+  const rows = [];
+  if (base && article.status === 'published') rows.push([{ text: 'Read it', url: `${base}/blog/${article.slug}` }]);
+  rows.push([{ text: article.featuredImage?.url ? '🔄 New photo' : '🖼 Find a photo', callback_data: `p:${article._id}` }]);
+  if (base) rows.push([{ text: 'Open in admin', url: `${base}/admin/articles/${article._id}/edit` }]);
+  return rows;
+}
+
+// The right buttons for a post's current state.
+const postButtons = (article) => (article.status === 'pending_approval' ? articleButtons(article) : liveButtons(article));
+
+// The cover photo's public address, which Telegram fetches itself. Needs the
+// site's public address; on a local test setup no photo is sent.
+async function coverUrl(article) {
+  const url = article?.featuredImage?.url || '';
+  if (/^https:\/\//i.test(url)) return url;
+  const base = await publicBase();
+  return url.startsWith('/') && base ? `${base}${url}` : '';
 }
 
 function articleSummary(article) {
@@ -64,15 +89,29 @@ function articleSummary(article) {
 }
 
 /** Sends a message to every linked chat. Never throws; returns how many were sent. */
-export async function sendToChats(text, { buttons, only } = {}) {
+export async function sendToChats(text, { buttons, only, photo } = {}) {
   try {
     const { doc, token } = await load();
     if (!doc.enabled || !token) return 0;
     let sent = 0;
+    const markup = buttons ? { reply_markup: { inline_keyboard: buttons } } : {};
     for (const chat of doc.chats.filter((c) => !only || c.chatId === only)) {
       try {
+        // With a cover photo: the photo with the text as its caption (Telegram
+        // allows 1024 characters there). If the photo cannot be sent, plain text.
+        let done = false;
+        if (photo && text.length <= 1024) {
+          // eslint-disable-next-line no-await-in-loop
+          done = await tg(token, 'sendPhoto', { chat_id: chat.chatId, photo, caption: text, parse_mode: 'HTML', ...markup }).then(
+            () => true,
+            (err) => {
+              logger.warn({ chat: chat.chatId, err: err.message }, 'Telegram photo failed; sending text');
+              return false;
+            },
+          );
+        }
         // eslint-disable-next-line no-await-in-loop
-        await tg(token, 'sendMessage', { chat_id: chat.chatId, text: text.slice(0, 4000), parse_mode: 'HTML', disable_web_page_preview: true, ...(buttons ? { reply_markup: { inline_keyboard: buttons } } : {}) });
+        if (!done) await tg(token, 'sendMessage', { chat_id: chat.chatId, text: text.slice(0, 4000), parse_mode: 'HTML', disable_web_page_preview: true, ...markup });
         sent += 1;
       } catch (err) {
         logger.warn({ chat: chat.chatId, err: err.message }, 'Telegram message failed');
@@ -91,8 +130,8 @@ async function notify(kind, build) {
   try {
     const doc = await TelegramBot.findOne({ key: 'telegram' }).lean();
     if (!doc?.enabled || !doc.chats?.length || doc.notify?.[kind] === false) return 0;
-    const { text, buttons } = await build();
-    return await sendToChats(text, { buttons });
+    const { text, buttons, photo } = await build();
+    return await sendToChats(text, { buttons, photo });
   } catch (err) {
     logger.warn({ kind, err: err.message }, 'Telegram notification failed');
     return 0;
@@ -104,22 +143,21 @@ export const notifyHeld = (article, reasons) =>
   notify('held', async () => ({
     text: `⏸ <b>Autopilot post waiting for your approval</b>\n\n${articleSummary(article)}\n\nWhy it was held:\n${reasons.map((r) => `• ${esc(r)}`).join('\n')}`,
     buttons: await articleButtons(article),
+    photo: await coverUrl(article),
   }));
 
 export const notifyReview = (article) =>
-  notify('review', async () => ({ text: `📝 <b>New AI article ready for review</b>\n\n${articleSummary(article)}`, buttons: await articleButtons(article) }));
+  notify('review', async () => ({ text: `📝 <b>New AI article ready for review</b>\n\n${articleSummary(article)}`, buttons: await articleButtons(article), photo: await coverUrl(article) }));
 
 export const notifySubmitted = (article, byName) =>
-  notify('submitted', async () => ({ text: `📨 <b>${esc(byName)} submitted a post for approval</b>\n\n${articleSummary(article)}`, buttons: await articleButtons(article) }));
+  notify('submitted', async () => ({ text: `📨 <b>${esc(byName)} submitted a post for approval</b>\n\n${articleSummary(article)}`, buttons: await articleButtons(article), photo: await coverUrl(article) }));
 
 export const notifyAutopilotPublished = (article) =>
-  notify('published', async () => {
-    const base = await publicBase();
-    return {
-      text: `🚀 <b>Autopilot published a post</b> (all checks passed)\n\n${articleSummary(article)}`,
-      buttons: base ? [[{ text: 'Read it', url: `${base}/blog/${article.slug}` }]] : undefined,
-    };
-  });
+  notify('published', async () => ({
+    text: `🚀 <b>Autopilot published a post</b> (all checks passed)\n\n${articleSummary(article)}`,
+    buttons: await liveButtons(article),
+    photo: await coverUrl(article),
+  }));
 
 // A refreshed version of an older post is ready: apply it or keep the current one.
 export const notifyRefreshReady = (article) =>
@@ -176,10 +214,29 @@ async function decide(articleId, action, chat) {
   return { ok: true, text: publish ? `✅ Published by ${user.name} (${when})` : `↩️ Rejected by ${user.name} and moved back to drafts (${when})` };
 }
 
+// ---------- New cover photo ----------
+// Finds a new photo, replaces the post's cover and saves the post. Each press
+// asks a different photo library first, and a photo is never used twice.
+async function newCover(articleId, chat) {
+  const user = await User.findOne({ _id: chat.user, active: true });
+  if (!user || !['admin', 'editor'].includes(user.role)) return { ok: false, text: 'The blog account linked to this chat can no longer change posts.' };
+  const spins = await Article.findById(articleId, 'history').lean();
+  if (!spins) return { ok: false, text: 'That post no longer exists.' };
+  const turn = (spins.history || []).filter((h) => h.action === 'cover:spin').length;
+  try {
+    const { article, photo } = await replaceArticleCover(articleId, user, { turn, via: 'Telegram' });
+    return { ok: true, article, text: `🖼 New photo saved (${photo.provider.replace(/ \(.*\)$/, '')}, search: "${photo.query}")` };
+  } catch (err) {
+    if (err instanceof SpinError) return { ok: false, text: err.message };
+    throw err;
+  }
+}
+
 // ---------- Commands ----------
 const HELP = [
   '<b>Commands</b>',
   '/pending – posts waiting for approval',
+  '/recent – the latest published posts (change their photo)',
   '/status – Autopilot and AI providers',
   '/stats – visitors today and this week',
   '/run – start an Autopilot post now',
@@ -193,10 +250,23 @@ async function cmdPending(chatId) {
   if (!items.length) return sendToChats('Nothing is waiting for approval. 🎉', { only: chatId });
   for (const a of items.slice(0, 5)) {
     // eslint-disable-next-line no-await-in-loop
-    await sendToChats(articleSummary(a), { only: chatId, buttons: await articleButtons(a) });
+    await sendToChats(articleSummary(a), { only: chatId, buttons: await articleButtons(a), photo: await coverUrl(a) });
   }
   if (total > 5) await sendToChats(`…and ${total - 5} more in the admin under Articles → Pending approval.`, { only: chatId });
   return total;
+}
+
+// The latest published posts, each with its photo and a New photo button.
+async function cmdRecent(chatId) {
+  const items = await Article.find({ status: 'published', translationOf: null }).sort({ publishedAt: -1 }).limit(5);
+  if (!items.length) return sendToChats('Nothing has been published yet.', { only: chatId });
+  const tz = (await SiteSettings.getSingleton()).autopilot?.timezone;
+  for (const a of items) {
+    const when = timeIn(a.publishedAt, tz);
+    // eslint-disable-next-line no-await-in-loop
+    await sendToChats(`${articleSummary(a)}\nPublished ${esc(when)}`, { only: chatId, buttons: await liveButtons(a), photo: await coverUrl(a) });
+  }
+  return items.length;
 }
 
 async function cmdStatus(chatId) {
@@ -266,6 +336,34 @@ async function linkChat(msg, code) {
   return true;
 }
 
+// Shows the result of "New photo": the photo in the message is swapped for
+// the new one (buttons kept), or a new photo message is sent.
+async function afterNewCover(token, chatId, message, result) {
+  if (!result.ok) {
+    await tg(token, 'sendMessage', { chat_id: chatId, text: `⚠️ ${esc(result.text)}`, parse_mode: 'HTML', disable_web_page_preview: true }).catch(() => {});
+    return;
+  }
+  const photo = await coverUrl(result.article);
+  const buttons = { inline_keyboard: await postButtons(result.article) };
+  const caption = `${articleSummary(result.article)}\n\n<i>${esc(result.text)}</i>`.slice(0, 1024);
+  if (photo && message?.photo) {
+    const swapped = await tg(token, 'editMessageMedia', { chat_id: chatId, message_id: message.message_id, media: { type: 'photo', media: photo, caption, parse_mode: 'HTML' }, reply_markup: buttons }).then(
+      () => true,
+      () => false,
+    );
+    if (swapped) return;
+  }
+  if (photo) {
+    const ok = await tg(token, 'sendPhoto', { chat_id: chatId, photo, caption, parse_mode: 'HTML', reply_markup: buttons }).then(
+      () => true,
+      () => false,
+    );
+    if (ok) return;
+  }
+  // No public address for the photo (or Telegram could not fetch it): text with buttons.
+  await tg(token, 'sendMessage', { chat_id: chatId, text: caption, parse_mode: 'HTML', disable_web_page_preview: true, reply_markup: buttons }).catch(() => {});
+}
+
 /** Handles one update from Telegram (a message or a button press). */
 export async function handleUpdate(update) {
   const { doc, token } = await load();
@@ -279,16 +377,24 @@ export async function handleUpdate(update) {
     const [action, id] = String(cq.data || '').split(':');
     let result;
     if (!chat || String(cq.from?.id) !== chat.fromId) result = { ok: false, text: 'Only the person who linked this chat can approve posts.' };
-    else if (!['a', 'r', 'u', 'd'].includes(action) || !/^[a-f0-9]{24}$/i.test(id || '')) result = { ok: false, text: 'Unknown button.' };
-    else result = await decide(id, action, chat);
+    else if (!['a', 'r', 'u', 'd', 'p'].includes(action) || !/^[a-f0-9]{24}$/i.test(id || '')) result = { ok: false, text: 'Unknown button.' };
+    else if (action === 'p') {
+      // Searching can take a few seconds: acknowledge the press first.
+      await tg(token, 'answerCallbackQuery', { callback_query_id: cq.id, text: 'Looking for a new photo…' }).catch(() => {});
+      result = await newCover(id, chat);
+      await afterNewCover(token, chatId, cq.message, result);
+      return;
+    } else result = await decide(id, action, chat);
     await tg(token, 'answerCallbackQuery', { callback_query_id: cq.id, text: result.text.slice(0, 190), show_alert: !result.ok }).catch(() => {});
     if (result.ok && cq.message) {
-      await tg(token, 'editMessageText', {
+      // Photo messages carry their text as a caption.
+      const isPhoto = Boolean(cq.message.photo);
+      const body = esc((isPhoto ? cq.message.caption : cq.message.text) || '');
+      await tg(token, isPhoto ? 'editMessageCaption' : 'editMessageText', {
         chat_id: chatId,
         message_id: cq.message.message_id,
-        text: `${esc(cq.message.text || '').slice(0, 3500)}\n\n<b>${esc(result.text)}</b>`,
+        ...(isPhoto ? { caption: `${body.slice(0, 900)}\n\n<b>${esc(result.text)}</b>` } : { text: `${body.slice(0, 3500)}\n\n<b>${esc(result.text)}</b>`, disable_web_page_preview: true }),
         parse_mode: 'HTML',
-        disable_web_page_preview: true,
         reply_markup: { inline_keyboard: [] },
       }).catch(() => {});
     }
@@ -317,6 +423,9 @@ export async function handleUpdate(update) {
   switch (cmd) {
     case '/pending':
       await cmdPending(chatId);
+      break;
+    case '/recent':
+      await cmdRecent(chatId);
       break;
     case '/status':
       await cmdStatus(chatId);

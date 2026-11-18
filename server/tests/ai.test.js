@@ -1324,6 +1324,27 @@ test('Telegram: link a chat, notifications with Publish/Reject buttons, only the
   assert.equal(back.status, 'draft');
   assert.equal(back.history.at(-1).note, 'Rejected from Telegram');
 
+  // "New photo": finds a photo, replaces the cover and saves the post; pressing again brings a different one.
+  assert.ok(msg.reply_markup.inline_keyboard[1].some((b) => b.callback_data === `p:${job.article}`), 'approval messages have a New photo button');
+  await Article.updateOne({ _id: post.body.article._id }, { $set: { 'seo.focusKeyword': 'laptop office' } }); // something the test photo library has
+  sim.telegram = [];
+  await press(30, 999, `p:${post.body.article._id}`);
+  assert.ok(!(await Article.findById(post.body.article._id)).featuredImage?.url, 'only the linked person can change it');
+  sim.telegram = [];
+  await press(31, 111, `p:${post.body.article._id}`);
+  const firstCover = (await Article.findById(post.body.article._id)).featuredImage;
+  assert.ok(firstCover.url, JSON.stringify(sim.telegram.map((m) => m.text || m.caption)));
+  const reply1 = sim.telegram.find((m) => m.method === 'sendMessage');
+  assert.match(reply1.text, /New photo saved/);
+  // The post was rejected back to drafts above, so it gets no Publish button, only New photo again.
+  assert.ok(reply1.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === `p:${post.body.article._id}`), 'New photo is offered again');
+  assert.ok(!reply1.reply_markup.inline_keyboard.flat().some((b) => /^a:/.test(b.callback_data || '')), 'drafts cannot be published from here');
+  await press(32, 111, `p:${post.body.article._id}`);
+  const secondCover = await Article.findById(post.body.article._id);
+  assert.notEqual(secondCover.featuredImage.url, firstCover.url, 'a different photo each time');
+  assert.equal(secondCover.history.filter((h) => h.action === 'cover:spin').length, 2);
+  assert.match(secondCover.history.at(-1).note, /New cover photo from Telegram/);
+
   // Held Autopilot posts list the reasons (escaped).
   sim.telegram = [];
   await bot.notifyHeld(back, ['2 paragraphs <b>uncited</b>']);
@@ -1337,6 +1358,30 @@ test('Telegram: link a chat, notifications with Publish/Reject buttons, only the
   const listed = sim.telegram.filter((m) => m.method === 'sendMessage' && m.reply_markup);
   assert.equal(listed.length, Math.min(5, pendingNow));
   assert.ok(listed.every((m) => /^a:[a-f0-9]{24}$/.test(m.reply_markup.inline_keyboard[0][0].callback_data)));
+  // /recent: the latest published posts, each with a New photo button (no Publish/Reject).
+  sim.telegram = [];
+  await say(40, '/recent');
+  const recent = sim.telegram.filter((m) => m.method === 'sendMessage' && m.reply_markup);
+  assert.equal(recent.length, Math.min(5, await Article.countDocuments({ status: 'published', translationOf: null })));
+  assert.ok(recent.length > 0);
+  assert.ok(recent.every((m) => m.reply_markup.inline_keyboard.flat().some((b) => /^p:[a-f0-9]{24}$/.test(b.callback_data))));
+  assert.ok(recent.every((m) => !m.reply_markup.inline_keyboard.flat().some((b) => /^a:/.test(b.callback_data || ''))), 'published posts offer no Publish button');
+  // Changing the photo of a published post keeps it published and offers the same buttons again.
+  const livePost = recent[0].reply_markup.inline_keyboard.flat().find((b) => /^p:/.test(b.callback_data)).callback_data.slice(2);
+  await Article.updateOne({ _id: livePost }, { $set: { 'seo.focusKeyword': 'laptop office' } });
+  sim.telegram = [];
+  await press(41, 111, `p:${livePost}`);
+  const liveAfter = await Article.findById(livePost);
+  assert.equal(liveAfter.status, 'published');
+  assert.equal(liveAfter.history.at(-1).action, 'cover:spin');
+  const liveReply = sim.telegram.find((m) => m.method === 'sendMessage' && m.reply_markup);
+  assert.ok(liveReply.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === `p:${livePost}`));
+  assert.ok(!liveReply.reply_markup.inline_keyboard.flat().some((b) => /^a:/.test(b.callback_data || '')));
+  // The "Autopilot published" message has the button too.
+  sim.telegram = [];
+  await bot.notifyAutopilotPublished(liveAfter);
+  const pubMsg = sent(/Autopilot published a post/)[0];
+  assert.ok(pubMsg?.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === `p:${livePost}`));
   await say(10, '/status');
   assert.match(sim.telegram.at(-1).text, /<b>Autopilot<\/b>/);
   await say(11, '/stats');
