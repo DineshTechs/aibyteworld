@@ -1050,10 +1050,13 @@ test('images: cover and in-article photos from free libraries with credits, neve
   await runQueued();
   job = await ResearchJob.findById(created.body.item._id);
   assert.equal(job.status, 'completed', job.error);
-  assert.equal(sim.calls.filter((c) => !/^wikimedia:office scene/.test(c) && c.startsWith('wikimedia:')).length, 2, `searched twice for a cover: ${sim.calls.join(' | ')}`);
+  const coverSearches = sim.calls.filter((c) => !/^wikimedia:office scene/.test(c) && c.startsWith('wikimedia:'));
+  assert.ok(coverSearches.length >= 3, `plainer searches were tried for the cover: ${sim.calls.join(' | ')}`);
+  assert.equal(new Set(coverSearches).size, coverSearches.length, 'each search is different');
   assert.equal(job.images.filter((x) => x.role === 'cover').length, 1);
   assert.equal(job.images.filter((x) => x.role === 'inline').length, 1);
   assert.ok(job.warnings.some((w) => /first in-article photo is used as the cover photo/.test(w)), job.warnings.join(' | '));
+  assert.ok(job.warnings.some((w) => /plainer searches \("/.test(w)), 'the warning lists the searches tried');
   article = await Article.findById(job.article);
   assert.ok(article.featuredImage.url);
   assert.equal((article.content.match(/<figure>/g) || []).length, 1, 'the cover photo is not repeated in the article');
@@ -1078,6 +1081,13 @@ test('Spin: a new cover photo from the photo libraries, never one already used',
   const { photoQuery } = await import('../src/services/images/imageService.js');
   assert.equal(photoQuery('Best Laptops for a Small Office in 2026'), 'Laptops Small Office');
   assert.equal(photoQuery('Anything', 'home wifi security'), 'home wifi security');
+  const { photoQueries } = await import('../src/services/images/imageService.js');
+  assert.deepEqual(photoQueries('Suki Agentic OS: Automating Complex Healthcare Workflows with AI', 'Suki agentic OS'), [
+    'Suki agentic OS',
+    'Automating Complex Healthcare Workflows AI',
+    'Suki Agentic OS Automating Complex',
+    'Automating Healthcare',
+  ]);
   const spin = (body) => request(app).post('/api/admin/media/spin').set(as('editor')).send(body);
   const one = await spin({ title: 'Best laptops for a small office', turn: 0 }).expect(200);
   const two = await spin({ title: 'Best laptops for a small office', turn: 1 }).expect(200);

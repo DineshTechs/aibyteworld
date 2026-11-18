@@ -94,7 +94,7 @@ export const spinCover = asyncHandler(async (req, res) => {
     await logActivity(req, 'media.spin', { entityType: 'Media', entityId: photo.media, summary: `New cover photo from ${photo.provider} (search: ${photo.query})` });
     res.json({ photo: { url: photo.url, alt: photo.alt, credit: photo.credit, provider: photo.provider, query: photo.query } });
   } catch (err) {
-    if (err instanceof AiError) throw badRequest(`No new photo found: ${err.message.slice(0, 200)}`);
+    if (err instanceof AiError) throw badRequest(err.message.slice(0, 500));
     throw err;
   }
 });

@@ -165,11 +165,26 @@ const SEARCH_STOP = new Set(
   'a an the and or of for to in on at by with from into about how what why when who your you our is are was were be it its this that these those vs versus best top guide guides tips ways new simple steps step complete ultimate 2024 2025 2026 2027'.split(' '),
 );
 
+const searchWords = (s) => plainText(s).replace(/[^\p{L}\p{N}\s-]/gu, ' ').split(/\s+/).filter((w) => w && !SEARCH_STOP.has(w.toLowerCase()));
+
 /** A short photo search from a post's focus keyword or title. */
 export function photoQuery(title, keyword = '') {
-  const words = (s) => plainText(s).replace(/[^\p{L}\p{N}\s-]/gu, ' ').split(/\s+/).filter((w) => w && !SEARCH_STOP.has(w.toLowerCase()));
-  const fromKeyword = words(keyword);
-  return (fromKeyword.length >= 2 ? fromKeyword : [...fromKeyword, ...words(title)]).slice(0, 5).join(' ');
+  const fromKeyword = searchWords(keyword);
+  return (fromKeyword.length >= 2 ? fromKeyword : [...fromKeyword, ...searchWords(title)]).slice(0, 5).join(' ');
+}
+
+/**
+ * Searches to try in turn. Focus keywords and titles often name a product or
+ * person no photo library has ("Suki agentic OS"), so plainer searches follow:
+ * the subtitle after a colon, the whole title, then its two longest words.
+ */
+export function photoQueries(title, keyword = '') {
+  const t = plainText(title);
+  const sub = t.includes(':') ? t.slice(t.indexOf(':') + 1) : '';
+  const longest = [...new Set(searchWords(sub || t))].sort((a, b) => b.length - a.length).slice(0, 2).join(' ');
+  const list = [photoQuery(t, keyword), sub && searchWords(sub).slice(0, 5).join(' '), searchWords(t).slice(0, 5).join(' '), longest];
+  const seen = new Set();
+  return list.filter((q) => q && !seen.has(q.toLowerCase()) && seen.add(q.toLowerCase()));
 }
 
 /**
@@ -178,14 +193,25 @@ export function photoQuery(title, keyword = '') {
  * library is asked first, so repeated spins also look in different places.
  */
 export async function spinCoverPhoto({ chain, title, keyword, turn = 0, appName, contact, uploadedBy }) {
-  const query = photoQuery(title, keyword);
-  if (!query) throw new AiError('Add a title first, so there is something to search for.', { code: 'no_results' });
+  const queries = photoQueries(title, keyword);
+  if (!queries.length) throw new AiError('Add a title first, so there is something to search for.', { code: 'no_results' });
   const n = chain.length ? turn % chain.length : 0;
   const order = [...chain.slice(n), ...chain.slice(0, n)];
-  const brief = { role: 'cover', query, alt: plainText(title).slice(0, 125) };
   const ctx = { used: new Set(), appName, contact, uploadedBy };
-  const { result } = await runWithFailover(order, 'image', (p) => fromProvider(p, brief, ctx));
-  return { ...result, query };
+  let problem = null; // a library outage, as opposed to "nothing found"
+  for (const query of queries) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const { result } = await runWithFailover(order, 'image', (p) => fromProvider(p, { role: 'cover', query, alt: plainText(title).slice(0, 125) }, ctx));
+      return { ...result, query };
+    } catch (err) {
+      if (!(err instanceof AiError)) throw err;
+      if (err.code !== 'no_results') problem = err;
+    }
+  }
+  const searched = `Searched for: ${queries.map((q) => `"${q}"`).join(', ')}.`;
+  if (problem) throw new AiError(`No new photo found. ${searched} Last problem: ${problem.message.slice(0, 160)}`, { code: problem.code });
+  throw new AiError(`None of your photo libraries had a new, fitting photo. ${searched} Try a plainer focus keyword, such as "healthcare AI".`, { code: 'no_results' });
 }
 
 export function pickSections(html, count) {
@@ -303,16 +329,33 @@ export async function addImages({ job, step, settings, chain, appName, contact, 
   // and otherwise use the first in-article photo as the cover.
   if (failed.cover) {
     const first = wanted[0];
-    const simpler = { ...first, query: (keyword || first.query).split(/\s+/).slice(0, 3).join(' ') };
+    // Plainer searches, as the editor's Spin button uses: the keyword, the
+    // subtitle, the title, then its two longest words (product names and
+    // people's names rarely have photos).
+    const tried = new Set([first.query.toLowerCase()]);
+    const retries = [(keyword || first.query).split(/\s+/).slice(0, 3).join(' '), ...photoQueries(title, keyword)].filter((q) => q && !tried.has(q.toLowerCase()) && tried.add(q.toLowerCase()));
     let note = `the first search failed (${failed.cover})`;
     try {
       await isCancelled();
       await new Promise((r) => setTimeout(r, env.isTest ? 0 : 5000));
-      await fetchOne(simpler);
-      job.warnings.push(`The cover photo was found on a second try; ${note}.`);
+      let found = '';
+      let lastErr;
+      for (const query of retries) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await fetchOne({ ...first, query });
+          found = query;
+          break;
+        } catch (err) {
+          if (!(err instanceof AiError)) throw err;
+          lastErr = err;
+        }
+      }
+      if (!found) throw lastErr || new AiError('No other searches to try.', { code: 'no_results' });
+      job.warnings.push(`The cover photo was found with a plainer search ("${found}"); ${note}.`);
     } catch (err) {
       if (!(err instanceof AiError)) throw err;
-      note += `; second try: ${err.message.slice(0, 160)}`;
+      note += `; plainer searches (${retries.map((q) => `"${q}"`).join(', ') || 'none'}) also failed: ${err.message.slice(0, 160)}`;
       const promote = added.find((x) => x.role === 'inline');
       if (promote) {
         promote.role = 'cover';
