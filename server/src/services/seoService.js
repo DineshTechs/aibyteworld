@@ -87,6 +87,14 @@ function personLd(u, base) {
   };
 }
 
+const GA_ID = /^G-[A-Z0-9]{4,20}$/;
+const GTM_ID = /^GTM-[A-Z0-9]{4,12}$/;
+function googleTags(a = {}) {
+  const ga = GA_ID.test(a.gaMeasurementId || '') ? a.gaMeasurementId : '';
+  const gtm = GTM_ID.test(a.gtmContainerId || '') ? a.gtmContainerId : '';
+  return ga || gtm ? { ga, gtm, ask: a.consentBanner !== false } : null;
+}
+
 export async function renderHead(pathname, base) {
   const settings = await SiteSettings.getSingleton();
   const site = settings.siteName;
@@ -111,6 +119,9 @@ export async function renderHead(pathname, base) {
     // Search Console and Bing Webmaster Tools ownership checks.
     googleVerification: settings.analytics?.googleVerification || '',
     bingVerification: settings.analytics?.bingVerification || '',
+    // Google tags, in the page itself so Google's setup checks find them.
+    // Consent Mode keeps them cookie-free until the visitor accepts.
+    tags: /^\/admin(\/|$)/.test(pathname) ? null : googleTags(settings.analytics),
   };
   const path = pathname.replace(/\/+$/, '') || '/';
   let m;
@@ -243,6 +254,10 @@ export function headToHtml(h, siteName) {
     h.description && `<meta name="twitter:description" content="${esc(h.ogDescription || h.description)}" />`,
     h.image && `<meta name="twitter:image" content="${esc(h.image)}" />`,
     ...h.ld.map((obj) => `<script type="application/ld+json" id="page-jsonld">${jsonLd(obj)}</script>`),
+    // Consent defaults first (/ga-init.js), then Google's own scripts.
+    h.tags && `<script src="/ga-init.js" data-ga="${esc(h.tags.ga)}" data-gtm="${esc(h.tags.gtm)}" data-ask="${h.tags.ask ? '1' : '0'}"></script>`,
+    h.tags?.ga && `<script async src="https://www.googletagmanager.com/gtag/js?id=${esc(h.tags.ga)}"></script>`,
+    h.tags?.gtm && `<script async src="https://www.googletagmanager.com/gtm.js?id=${esc(h.tags.gtm)}"></script>`,
   ];
   return tags.filter(Boolean).join('\n    ');
 }

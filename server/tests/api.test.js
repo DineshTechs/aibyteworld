@@ -266,6 +266,11 @@ test('Google Analytics and Search Console settings: validated, public where need
   const g = await request(app).put('/api/admin/settings').set(as('admin')).send({ ...base, analytics: { gaMeasurementId: 'G-TEST123ABC', gtmContainerId: snippet, googleVerification: 'AbC_123-verifyCode9', bingVerification: '0123456789ABCDEF0123456789ABCDEF' } }).expect(200);
   assert.equal(g.body.settings.analytics.gtmContainerId, 'GTM-5J36KQRM');
   assert.equal((await request(app).get('/api/public/settings').expect(200)).body.settings.analytics.gtmContainerId, 'GTM-5J36KQRM');
+  // The tags are in the page itself (so Google's setup checks find them), consent defaults first; not on admin pages.
+  const seo = await import('../src/services/seoService.js');
+  const page = seo.headToHtml(await seo.renderHead('/', 'https://www.example.org'), 'Test');
+  assert.match(page, /<script src="\/ga-init\.js" data-ga="G-TEST123ABC" data-gtm="GTM-5J36KQRM" data-ask="1"><\/script>\n\s*<script async src="https:\/\/www\.googletagmanager\.com\/gtag\/js\?id=G-TEST123ABC"><\/script>\n\s*<script async src="https:\/\/www\.googletagmanager\.com\/gtm\.js\?id=GTM-5J36KQRM"><\/script>/);
+  assert.doesNotMatch(seo.headToHtml(await seo.renderHead('/admin/settings', 'https://www.example.org'), 'Test'), /googletagmanager/);
   const { renderHead, headToHtml } = await import('../src/services/seoService.js');
   const head = headToHtml(await renderHead('/', 'https://blog.example.test'), 'Test Blog');
   assert.match(head, /<meta name="google-site-verification" content="AbC_123-verifyCode9" \/>/);

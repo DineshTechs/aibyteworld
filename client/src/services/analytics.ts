@@ -103,28 +103,38 @@ export function setConsent(value: Consent) {
 }
 
 // ---------- Google Analytics 4 ----------
-// Loaded only when a measurement ID is set and (with the consent banner on)
-// the visitor has accepted. Page views are sent on every route change.
+// Google Consent Mode: the tags run for every visitor, cookie-free until the
+// visitor accepts (then analytics cookies are allowed). On the live site the
+// server puts the tags in the page (public/ga-init.js sets the consent
+// defaults first), so Google's setup checks can find them; in development
+// they are added here. Page views are sent on every route change.
 declare global {
   interface Window {
     dataLayer?: unknown[];
     gtag?: (...args: unknown[]) => void;
+    __siteTags?: { ga: string; gtm: string; staff: boolean };
   }
 }
 let gaLoadedId = '';
 
-export function loadGoogleAnalytics(id: string) {
-  if (!/^G-[A-Z0-9]{4,20}$/.test(id) || gaLoadedId === id || skip()) return;
-  gaLoadedId = id;
+function ensureGtag(granted: boolean) {
+  if (window.gtag) return;
   window.dataLayer = window.dataLayer || [];
   // gtag must push the arguments object itself.
   window.gtag = function gtag() {
     // eslint-disable-next-line prefer-rest-params
     window.dataLayer!.push(arguments);
   };
-  window.gtag('consent', 'default', { ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', analytics_storage: 'granted' });
+  window.gtag('consent', 'default', { ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', analytics_storage: granted ? 'granted' : 'denied' });
   window.gtag('js', new Date());
-  window.gtag('config', id, { send_page_view: false, anonymize_ip: true });
+}
+
+export function loadGoogleAnalytics(id: string, granted: boolean) {
+  if (!/^G-[A-Z0-9]{4,20}$/.test(id) || gaLoadedId === id || skip()) return;
+  gaLoadedId = id;
+  if (window.__siteTags?.ga === id) return; // already in the page
+  ensureGtag(granted);
+  window.gtag!('config', id, { send_page_view: false });
   const script = document.createElement('script');
   script.async = true;
   script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(id)}`;
@@ -142,11 +152,12 @@ export function gaPageView(path: string) {
 // page tags on the Custom Event trigger "page_view" (or History Change).
 let gtmLoadedId = '';
 
-export function loadTagManager(id: string) {
+export function loadTagManager(id: string, granted: boolean) {
   if (!/^GTM-[A-Z0-9]{4,12}$/.test(id) || gtmLoadedId === id || skip()) return;
   gtmLoadedId = id;
-  window.dataLayer = window.dataLayer || [];
-  window.dataLayer.push({ 'gtm.start': Date.now(), event: 'gtm.js' });
+  if (window.__siteTags?.gtm === id) return; // already in the page
+  ensureGtag(granted);
+  window.dataLayer!.push({ 'gtm.start': Date.now(), event: 'gtm.js' });
   const script = document.createElement('script');
   script.async = true;
   script.src = `https://www.googletagmanager.com/gtm.js?id=${encodeURIComponent(id)}`;
@@ -158,7 +169,14 @@ export function gtmPageView(path: string) {
   window.dataLayer.push({ event: 'page_view', page_path: path, page_location: window.location.href, page_title: document.title });
 }
 
-// Withdrawing consent: stop sending and remove Google Analytics cookies.
+// The visitor accepted: analytics cookies are allowed from now on.
+export function grantGoogleConsent() {
+  if (!window.gtag || skip()) return;
+  window.gtag('consent', 'update', { analytics_storage: 'granted' });
+  window.dataLayer?.push({ event: 'consent_granted' });
+}
+
+// Withdrawing consent: back to cookie-free and remove Google Analytics cookies.
 export function stopGoogleAnalytics() {
   if (gtmLoadedId && window.dataLayer) window.dataLayer.push({ event: 'consent_withdrawn' });
   if (window.gtag) window.gtag('consent', 'update', { analytics_storage: 'denied' });

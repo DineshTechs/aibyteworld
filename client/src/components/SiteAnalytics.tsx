@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useSettings } from '../context/SettingsContext';
-import { gaPageView, getConsent, gtmPageView, loadGoogleAnalytics, loadTagManager, setConsent, stopGoogleAnalytics, type Consent } from '../services/analytics';
+import { gaPageView, getConsent, grantGoogleConsent, gtmPageView, loadGoogleAnalytics, loadTagManager, setConsent, stopGoogleAnalytics, type Consent } from '../services/analytics';
 
-// Google Analytics and/or Tag Manager with a cookie banner. Without either ID
-// nothing is loaded and no banner is shown (the built-in analytics use no cookies).
+// Google Analytics and/or Tag Manager with a cookie banner (Google Consent
+// Mode): the tags count page views without cookies until the visitor accepts.
+// Without either ID nothing is loaded and no banner is shown (the built-in
+// analytics use no cookies).
 export function SiteAnalytics() {
   const { settings, loaded } = useSettings();
   const { pathname, search } = useLocation();
@@ -12,7 +14,8 @@ export function SiteAnalytics() {
   const id = settings.analytics?.gaMeasurementId || '';
   const gtm = settings.analytics?.gtmContainerId || '';
   const askFirst = settings.analytics?.consentBanner !== false;
-  const allowed = Boolean(id || gtm) && (!askFirst || consent === 'granted');
+  const granted = !askFirst || consent === 'granted';
+  const active = Boolean(id || gtm);
 
   useEffect(() => {
     const onChange = () => setLocal(getConsent());
@@ -21,26 +24,32 @@ export function SiteAnalytics() {
   }, []);
 
   useEffect(() => {
-    if (!allowed) return;
-    if (id) loadGoogleAnalytics(id);
-    if (gtm) loadTagManager(gtm);
-  }, [allowed, id, gtm]);
+    if (!active) return;
+    if (id) loadGoogleAnalytics(id, granted);
+    if (gtm) loadTagManager(gtm, granted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, id, gtm]);
+
+  // Accepting (now or earlier in this visit) allows analytics cookies.
+  useEffect(() => {
+    if (active && askFirst && consent === 'granted') grantGoogleConsent();
+  }, [active, askFirst, consent]);
 
   useEffect(() => {
-    if (!allowed) return undefined;
+    if (!active) return undefined;
     // Wait for the new page to set its title.
     const t = window.setTimeout(() => {
       gaPageView(pathname + search);
       gtmPageView(pathname + search);
     }, 300);
     return () => window.clearTimeout(t);
-  }, [allowed, pathname, search]);
+  }, [active, pathname, search]);
 
   if (!loaded || !(id || gtm) || !askFirst || consent) return null;
   return (
     <div role="dialog" aria-live="polite" aria-label="Cookie consent" className="fixed inset-x-3 bottom-3 z-50 mx-auto max-w-2xl rounded-xl border border-stone-200 bg-white p-4 shadow-lg dark:border-stone-700 dark:bg-stone-900 sm:inset-x-6">
       <p className="text-sm text-stone-700 dark:text-stone-200">
-        We use Google Analytics cookies to understand which articles readers find useful. You can say no; the site works the same either way.{' '}
+        May we use Google Analytics cookies to understand which articles readers find useful? If you decline, no cookies are set and Google only receives anonymous page counts. The site works the same either way.{' '}
         <Link to="/privacy" className="font-medium text-brand-700 underline dark:text-brand-300">
           Privacy policy
         </Link>
