@@ -17,6 +17,7 @@ interface AutopilotSettings {
   country: string;
   language: string;
   category?: string | null;
+  rotationCategories?: string[];
   length: number;
   style: string;
   publishMode: 'auto_if_checks_pass' | 'approval';
@@ -43,6 +44,7 @@ interface View {
   slots: string[];
   slotKinds?: ('trending' | 'evergreen')[];
   nextKind?: string;
+  rotation?: { _id: string; name: string }[];
   nextRunLocal: string;
   lastRunLocal: string;
   jobs: AutopilotJob[];
@@ -96,6 +98,7 @@ export default function AutopilotPage() {
         evergreenPerDay: Math.min(body.evergreenPerDay ?? 0, body.postsPerDay),
         evergreenTopics: topics.split('\n').map((t) => t.trim()).filter((t) => t.length >= 5).slice(0, 50),
         category: body.category || null,
+        rotationCategories: body.rotationCategories || [],
         runAs: null,
       });
       setData(r);
@@ -144,7 +147,7 @@ export default function AutopilotPage() {
       <div className={`mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4 ${data.settings.enabled ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950' : 'border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900'}`}>
         <div className="text-sm">
           <p className="font-semibold">{data.settings.enabled ? `On · ${data.settings.postsPerDay} post(s) a day at ${data.slots.map((t, i) => `${t}${data.slotKinds?.[i] === 'evergreen' ? ' (guide)' : ''}`).join(', ')} (${data.settings.timezone})` : 'Off'}</p>
-          {data.settings.enabled && <p>Next post: {data.nextRunLocal}{data.nextKind ? ` · ${data.nextKind === 'evergreen' ? 'evergreen guide' : 'trending story'}` : ''}</p>}
+          {data.settings.enabled && <p>Next post: {data.nextRunLocal}{data.nextKind ? ` · ${data.nextKind === 'evergreen' ? 'evergreen guide' : 'trending story'}` : ''}{data.rotation?.length ? ` · ${data.rotation[0].name}` : ''}</p>}
           {data.lastRunLocal && (
             <p className="text-stone-500">
               Last run {data.lastRunLocal}
@@ -240,14 +243,41 @@ export default function AutopilotPage() {
                 Category for posts
               </label>
               <select id="ap-cat" className="input" value={form.category || ''} onChange={(e) => set({ category: e.target.value })}>
-                <option value="">No category</option>
+                <option value="">Rotate through categories</option>
                 {categories.data?.items.map((c) => (
                   <option key={c._id} value={c._id}>
-                    {c.name}
+                    Always {c.name}
                   </option>
                 ))}
               </select>
+              {!form.category && (
+                <p className="mt-1 text-xs text-stone-500">
+                  Each post goes to the category with the fewest Autopilot posts in the last 7 days, and its topic is searched for in that subject.
+                  {data.rotation?.length ? ` Coming up: ${data.rotation.slice(0, 4).map((c) => c.name).join(', ')}.` : ''}
+                </p>
+              )}
             </div>
+            {!form.category && (categories.data?.items.length ?? 0) > 0 && (
+              <fieldset className="sm:col-span-2">
+                <legend className="label">Categories in the rotation</legend>
+                <p className="mb-2 text-xs text-stone-500">None ticked = every topic category (Guides &amp; How-tos and Technology are used automatically, not rotated).</p>
+                <div className="grid gap-1.5 sm:grid-cols-3">
+                  {categories.data!.items.map((c) => {
+                    const on = (form.rotationCategories || []).includes(c._id);
+                    return (
+                      <label key={c._id} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={() => set({ rotationCategories: on ? (form.rotationCategories || []).filter((x) => x !== c._id) : [...(form.rotationCategories || []), c._id] })}
+                        />
+                        {c.name}
+                      </label>
+                    );
+                  })}
+                </div>
+              </fieldset>
+            )}
             <div>
               <label htmlFor="ap-len" className="label">
                 Length (words)

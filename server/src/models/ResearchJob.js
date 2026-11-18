@@ -95,6 +95,7 @@ const researchJobSchema = new mongoose.Schema(
       enabled: { type: Boolean, default: false },
       kind: { type: String, enum: ['trending', 'evergreen'], default: 'trending' },
       trend: { type: String, default: '' }, // the trending story the topic came from
+      category: { type: ObjectId, ref: 'Category' }, // the category this post was planned for (rotation)
       gate: { passed: Boolean, reasons: [String], checkedAt: Date },
       published: { type: Boolean, default: false },
     },

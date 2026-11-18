@@ -12,6 +12,7 @@ import { nextRunTime } from '../autopilot/schedule.js';
 import { afterPublish } from '../publishHooks.js';
 import { applyRefresh, discardRefresh } from '../refresh/refreshService.js';
 import { SpinError, replaceArticleCover } from '../images/coverSpin.js';
+import { rotationOrder } from '../categories.js';
 
 // Telegram bot: sends notifications, lets linked admins approve or reject
 // posts with buttons, and answers a few commands. It polls Telegram for
@@ -274,9 +275,10 @@ async function cmdStatus(chatId) {
   const ap = s.autopilot;
   const [writer, research, images, pending] = await Promise.all([providerChain(s.ai, 'writer'), providerChain(s.ai, 'research'), providerChain(s.ai, 'image'), Article.countDocuments({ status: 'pending_approval' })]);
   const names = (c) => c.chain.map((p) => p.info.name.replace(/ \(.*\)$/, '')).slice(0, 4).join(', ') || 'none ready';
+  const next = await rotationOrder(ap);
   const lines = [
     `<b>Autopilot</b>: ${ap.enabled ? `on, ${ap.postsPerDay} posts a day` : 'off'}`,
-    ap.enabled ? `Next post: ${timeIn(ap.nextRunAt, ap.timezone)}` : '',
+    ap.enabled ? `Next post: ${timeIn(ap.nextRunAt, ap.timezone)}${next[0] ? ` · ${esc(next[0].name)}` : ''}` : '',
     ap.lastResult ? `Last: ${esc(ap.lastResult.slice(0, 200))}` : '',
     `Waiting for approval: ${pending}`,
     '',

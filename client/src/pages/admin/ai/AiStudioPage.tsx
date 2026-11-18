@@ -133,7 +133,7 @@ export default function AiStudioPage() {
                 Category
               </label>
               <select id="s-cat" className="input" value={f.category} onChange={(e) => set({ category: e.target.value })}>
-                <option value="">No category</option>
+                <option value="">Automatic (best match by topic)</option>
                 {categories.data?.items.map((c) => (
                   <option key={c._id} value={c._id}>
                     {c.name}

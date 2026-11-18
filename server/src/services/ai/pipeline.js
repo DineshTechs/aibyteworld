@@ -3,7 +3,7 @@ import { logger } from '../../config/logger.js';
 import { getAdapter } from '../../integrations/ai/index.js';
 import { AiError, withRetry } from '../../integrations/ai/errors.js';
 import { stripFences } from '../../integrations/ai/gemini.js';
-import { Article, ResearchJob, ResearchSource, SiteSettings } from '../../models/index.js';
+import { Article, Category, ResearchJob, ResearchSource, SiteSettings } from '../../models/index.js';
 import { excerptFrom, htmlToText, makeSlug, plainText, readingTimeMinutes, sanitizeArticleHtml, uniqueSlug } from '../../utils/content.js';
 import { extractPageMeta, safeFetch } from '../../utils/safeFetch.js';
 import { logActivity } from '../activityService.js';
@@ -17,6 +17,7 @@ import { extractionPrompt, extractionSchema, verifyExtraction } from './searchRe
 import { addImages } from '../images/imageService.js';
 import { linkNewContent } from '../seo/internalLinks.js';
 import { publicBase } from '../growth/common.js';
+import { guessCategories } from '../categories.js';
 
 export class JobCancelled extends Error {}
 
@@ -118,6 +119,18 @@ async function mapLimit(items, limit, fn) {
     }),
   );
   return out;
+}
+
+// A post's categories: the one chosen for it (AI Content Studio, a fixed
+// Autopilot category or the rotation) or the best match by topic; Autopilot's
+// evergreen guides are also filed under Guides & How-tos.
+async function postCategories(job, post) {
+  const ids = job.input.category ? [job.input.category] : await guessCategories(post);
+  if (job.autopilot?.kind === 'evergreen') {
+    const guides = await Category.findOne({ slug: 'guides' }, '_id').lean();
+    if (guides && !ids.some((x) => String(x) === String(guides._id))) ids.push(guides._id);
+  }
+  return ids;
 }
 
 export async function runPipeline(jobId) {
@@ -549,7 +562,8 @@ export async function runPipeline(jobId) {
         featuredImage: coverImage,
         readingTime: readingTimeMinutes(text),
         author: job.createdBy,
-        categories: job.input.category ? [job.input.category] : [],
+        // The category chosen in AI Content Studio or Autopilot, else the best match by topic.
+        categories: await postCategories(job, { title: job.plan.title, keyword: seoFields.focusKeyword, text }),
         origin: 'ai',
         status,
         sources: cited,

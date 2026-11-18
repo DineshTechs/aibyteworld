@@ -4,6 +4,7 @@ import { Category, ResearchJob, SiteSettings, User } from '../models/index.js';
 import { logActivity } from '../services/activityService.js';
 import { isValidTimeZone, nextRunTime, slotKind, slotMinutes } from '../services/autopilot/schedule.js';
 import { nextKind, startAutopilotPost } from '../services/autopilot/runner.js';
+import { rotationOrder } from '../services/categories.js';
 import { providerChain } from '../services/ai/providerService.js';
 import { plainText } from '../utils/content.js';
 import { asyncHandler, badRequest, HttpError } from '../utils/http.js';
@@ -18,6 +19,7 @@ export const autopilotSchema = z.object({
   country: z.string().trim().max(80).default(''),
   language: z.string().trim().min(1).max(60).default('English'),
   category: objectId.nullable().optional(),
+  rotationCategories: z.array(objectId).max(40).optional(), // empty = every topic category
   length: z.number().int().min(600).max(4000),
   style: z.string().trim().max(120).default(''),
   publishMode: z.enum(['auto_if_checks_pass', 'approval']),
@@ -45,7 +47,9 @@ async function view() {
   const imagesReady = Boolean(s.ai.imagesEnabled && images.chain.length);
   const slotKinds = slots.map((_t, i) => slotKind(i, cfg.postsPerDay, cfg.evergreenPerDay));
   const upcoming = cfg.enabled ? await nextKind(cfg) : '';
-  return { settings: cfg, slots, slotKinds, nextKind: upcoming, nextRunLocal: cfg.enabled ? fmt(cfg.nextRunAt, cfg.timezone) : '', lastRunLocal: fmt(cfg.lastRunAt, cfg.timezone), jobs, imagesReady, imageSources: images.chain.map((p) => p.info.name) };
+  // Rotation: which category the next post is for, and the order after it.
+  const rotation = (await rotationOrder(cfg)).map((c) => ({ _id: c._id, name: c.name }));
+  return { settings: { ...cfg, rotationCategories: (cfg.rotationCategories || []).map(String) }, rotation, slots, slotKinds, nextKind: upcoming, nextRunLocal: cfg.enabled ? fmt(cfg.nextRunAt, cfg.timezone) : '', lastRunLocal: fmt(cfg.lastRunAt, cfg.timezone), jobs, imagesReady, imageSources: images.chain.map((p) => p.info.name) };
 }
 
 export const getAutopilot = asyncHandler(async (_req, res) => res.json(await view()));
@@ -53,6 +57,7 @@ export const getAutopilot = asyncHandler(async (_req, res) => res.json(await vie
 export const updateAutopilot = asyncHandler(async (req, res) => {
   const b = req.body;
   if (b.category && !(await Category.exists({ _id: b.category }))) throw badRequest('Selected category does not exist');
+  if (b.rotationCategories?.length && (await Category.countDocuments({ _id: { $in: b.rotationCategories } })) !== new Set(b.rotationCategories.map(String)).size) throw badRequest('A category in the rotation does not exist');
   if (b.runAs && !(await User.exists({ _id: b.runAs, active: true, role: { $in: ['admin', 'editor'] } }))) throw badRequest('Choose an active admin or editor to publish as');
   const s = await SiteSettings.getSingleton();
   const prev = s.autopilot;
@@ -67,6 +72,8 @@ export const updateAutopilot = asyncHandler(async (req, res) => {
     evergreenPerDay: Math.min(b.evergreenPerDay, b.postsPerDay),
     evergreenTopics: [...new Set(b.evergreenTopics.map(plainText).filter(Boolean))],
     category: b.category || undefined,
+    // Older admin pages do not send the rotation list; keep it then.
+    rotationCategories: b.rotationCategories ? [...new Set(b.rotationCategories.map(String))] : prev.rotationCategories || [],
     runAs: b.runAs || undefined,
   });
   if (!b.enabled) s.autopilot.nextRunAt = undefined;

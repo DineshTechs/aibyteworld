@@ -5,6 +5,7 @@ import { providerChain } from '../ai/providerService.js';
 import { localDayStart, nextRunTime, slotKind } from './schedule.js';
 import { notifyFailed } from '../telegram/bot.js';
 import { discoverTrends, evergreenHints, pickEvergreen, pickTopic, recentTitles, similarity } from './topics.js';
+import { focusFor, rotationOrder } from '../categories.js';
 
 // The kind of the next scheduled post: today's posts so far decide its place in the day.
 export async function nextKind(cfg, now = new Date()) {
@@ -35,18 +36,43 @@ export async function startAutopilotPost(reason = 'schedule', kind = 'trending')
   let via;
   let found = 0;
   let given = '';
-  if (kind === 'evergreen') {
-    // The admin's own ideas first (skipping any that are already covered).
-    given = (cfg.evergreenTopics || []).find((t) => !covered.some((c) => similarity(c, t) >= 0.6)) || '';
-    const hints = given ? [] : await evergreenHints(cfg, research.chain);
-    pick = await pickEvergreen(cfg, writer.chain, covered, hints, given);
-    via = given ? 'your evergreen topic list' : `${hints.length ? 'Tavily hints and ' : ''}the writing model`;
-  } else {
-    const { trends, via: v } = await discoverTrends(cfg, research.chain);
-    pick = await pickTopic(cfg, trends, writer.chain, covered);
-    via = v;
-    found = trends.length;
+  let target = null; // the category this post is for (rotation)
+  // The admin's own evergreen ideas come first (skipping any already covered);
+  // they are filed by topic after writing.
+  if (kind === 'evergreen') given = (cfg.evergreenTopics || []).find((t) => !covered.some((c) => similarity(c, t) >= 0.6)) || '';
+
+  // Rotation: the category with the fewest recent Autopilot posts goes first.
+  // If its subject has no fresh topic today, the next category is tried.
+  const order = given ? [] : (await rotationOrder(cfg)).slice(0, 3);
+  const attempts = order.length ? order : [null];
+  const missed = [];
+  for (const category of attempts) {
+    const c = category ? focusFor(cfg, category) : cfg;
+    try {
+      if (kind === 'evergreen') {
+        // eslint-disable-next-line no-await-in-loop
+        const hints = given ? [] : await evergreenHints(c, research.chain);
+        // eslint-disable-next-line no-await-in-loop
+        pick = await pickEvergreen(c, writer.chain, covered, hints, given);
+        via = given ? 'your evergreen topic list' : `${hints.length ? 'Tavily hints and ' : ''}the writing model`;
+      } else {
+        // eslint-disable-next-line no-await-in-loop
+        const { trends, via: v } = await discoverTrends(c, research.chain);
+        // eslint-disable-next-line no-await-in-loop
+        pick = await pickTopic(c, trends, writer.chain, covered);
+        via = v;
+        found = trends.length;
+      }
+      target = category;
+      break;
+    } catch (err) {
+      // Nothing new for this subject: try the next category. Anything else (a provider problem) stops here.
+      if (!category || !['no_trends', 'duplicate'].includes(err.code)) throw err;
+      missed.push(`${category.name}: ${err.message}`.slice(0, 200));
+      if (category === attempts[attempts.length - 1]) throw new Error(`No new topic in the next categories of the rotation. ${missed.join(' ')}`.slice(0, 600));
+    }
   }
+  if (target) via = `${via}, for ${target.name}${missed.length ? ` (skipped ${missed.map((m) => m.split(':')[0]).join(', ')}: nothing new)` : ''}`;
   const instructions = kind === 'evergreen'
     ? `This is an evergreen guide that should stay useful for a year or more. ${pick.angle} Answer the reader's question step by step with practical advice, use only the research findings for facts and figures, and avoid news framing and dates unless they come from the findings.`
     : `This article is based on a trending story: "${pick.trend}". ${pick.angle} Explain what happened using only the research findings, then focus on what it means in practice for readers.`;
@@ -60,13 +86,13 @@ export async function startAutopilotPost(reason = 'schedule', kind = 'trending')
       audience: pick.audience,
       length: cfg.length,
       style: cfg.style,
-      category: cfg.category || undefined,
+      category: cfg.category || target?._id || undefined,
       instructions: instructions.slice(0, 3000),
     },
     provider: writer.chain[0].key,
     model: writer.chain[0].model,
     createdBy: owner._id,
-    autopilot: { enabled: true, kind, trend: pick.trend },
+    autopilot: { enabled: true, kind, trend: pick.trend, ...(target ? { category: target._id } : {}) },
   });
   if (given) await SiteSettings.updateOne({ key: 'site' }, { $pull: { 'autopilot.evergreenTopics': given } });
   await logActivity({ user: { _id: owner._id, name: 'Autopilot' } }, 'autopilot.started', {

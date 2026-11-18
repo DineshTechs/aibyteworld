@@ -68,7 +68,10 @@ const siteSettingsSchema = new mongoose.Schema(
       keywords: { type: [String], default: () => ['artificial intelligence', 'AI tools', 'technology', 'software', 'gadgets'] },
       country: { type: String, default: '', maxlength: 80 }, // empty = worldwide
       language: { type: String, default: 'English', maxlength: 60 },
+      // A fixed category for every post; empty = rotate through the categories.
       category: { type: mongoose.Schema.Types.ObjectId, ref: 'Category' },
+      // Categories in the rotation; empty = every topic category (not Guides or Technology).
+      rotationCategories: { type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Category' }], default: () => [] },
       length: { type: Number, default: 1200, min: 600, max: 4000 },
       style: { type: String, default: 'Conversational, clear and practical', maxlength: 120 },
       publishMode: { type: String, enum: ['auto_if_checks_pass', 'approval'], default: 'auto_if_checks_pass' },
@@ -84,6 +87,8 @@ const siteSettingsSchema = new mongoose.Schema(
       lastRunAt: { type: Date },
       lastResult: { type: String, default: '' },
     },
+    // One-time setup steps already done at server start (see services/categories.js).
+    setupDone: { type: [String], default: () => [] },
   },
   { timestamps: true },
 );

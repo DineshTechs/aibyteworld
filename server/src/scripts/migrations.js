@@ -2,6 +2,7 @@ import { logger } from '../config/logger.js';
 import { DEFAULT_IMAGE_ORDER, DEFAULT_RESEARCH_ORDER, DEFAULT_WRITER_ORDER, PROVIDER_INFO } from '../integrations/ai/index.js';
 import { Article, SiteSettings } from '../models/index.js';
 import { withoutCitationMarks } from '../utils/content.js';
+import { setUpCategories } from '../services/categories.js';
 
 // Safe, repeatable data updates run at server start.
 //
@@ -38,6 +39,7 @@ export async function cleanExcerpts() {
 export async function runMigrations() {
   await fixArticleTextIndex();
   await cleanExcerpts();
+  await setUpCategories();
   const s = await SiteSettings.getSingleton();
   const ai = s.ai;
   // Image sources that no longer exist (AI image generation was removed) leave the list.

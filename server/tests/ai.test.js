@@ -22,7 +22,7 @@ const { processQueueOnce } = await import('../src/jobs/aiJobRunner.js');
 const { applyCitations } = await import('../src/services/ai/citations.js');
 const { runMigrations } = await import('../src/scripts/migrations.js');
 const { applyAutopilotGate, evaluateGate } = await import('../src/services/autopilot/gate.js');
-const { autopilotTick } = await import('../src/services/autopilot/runner.js');
+const { autopilotTick, startAutopilotPost } = await import('../src/services/autopilot/runner.js');
 const { nextRunTime } = await import('../src/services/autopilot/schedule.js');
 const { buildRobots, buildSitemap, buildRss, renderHead, headToHtml } = await import('../src/services/seoService.js');
 const { encryptSecret, decryptSecret } = await import('../src/utils/crypto.js');
@@ -40,7 +40,7 @@ const as = (role) => ({ Authorization: `Bearer ${tokens[role]}` });
 
 // ---------- Simulated AI providers ----------
 const realFetch = globalThis.fetch;
-const sim = { calls: [], failNext: [], authFail: false, researchNoGrounding: false, quotaOnResearch: false, geminiQuota: false, groqQuota: false, openaiNoCredits: false, editMode: 'good', cleanArticle: false, unsplashLimit: false, pexelsN: 0, factFixMode: 'good', telegram: [], wmCoverFail: false, wmAgent: '' };
+const sim = { calls: [], failNext: [], authFail: false, researchNoGrounding: false, quotaOnResearch: false, geminiQuota: false, groqQuota: false, openaiNoCredits: false, editMode: 'good', cleanArticle: false, unsplashLimit: false, pexelsN: 0, factFixMode: 'good', telegram: [], wmCoverFail: false, wmAgent: '', pickUnique: false, pickDupFor: '', pickN: 0, picks: [], newsQueries: [], pickMade: {} };
 const TG_TOKEN = '123456789:AAFakeTokenForTestsOnly_abcdefghijklmn';
 const KEYS = {
   openai: 'sk-FAKE-openai-key-1234567890',
@@ -137,6 +137,19 @@ function stepAnswer(system, prompt) {
     })];
   }
   if (system.includes('You are the editor of a blog about')) {
+    // Rotation tests: a fresh topic for each subject, or a covered one to force a skip.
+    const niche = (system.match(/blog about (.+?)\. You/) || [])[1] || '';
+    sim.picks.push(niche);
+    const dupWanted = sim.pickDupFor && niche.includes(sim.pickDupFor);
+    if (sim.pickUnique && (!dupWanted || sim.pickMade[niche])) {
+      let topic = sim.pickMade[niche]; // already used: rejected as covered
+      if (!dupWanted) {
+        sim.pickN += 1;
+        topic = `${niche} ${['alphaone quasarx', 'bravotwo nebulay', 'charlie pulsarz', 'deltafour cometw', 'echofive meteorv', 'foxtrot galaxyu', 'golfseven orbitt'][sim.pickN % 7]}`;
+        sim.pickMade[niche] = topic;
+      }
+      return ['pick', JSON.stringify({ topic, primaryKeyword: niche, secondaryKeywords: [], audience: 'Readers', angle: 'Explains it.', trend: 'Chipmaker unveils new AI accelerator' })];
+    }
     return ['pick', JSON.stringify({
       topic: 'What the new AI chip launch means for small teams',
       primaryKeyword: 'AI chip launch',
@@ -305,6 +318,7 @@ globalThis.fetch = async (url, init = {}) => {
   if (u === 'https://api.tavily.com/search') {
     if (h.Authorization !== `Bearer ${KEYS.tavily}`) return json(401, { detail: { error: 'Unauthorized: missing or invalid API key.' } });
     sim.calls.push(body.topic === 'news' ? 'tavily:news' : 'tavily:search');
+    if (body.topic === 'news') sim.newsQueries.push(body.query);
     if (body.topic === 'news') {
       return json(200, { results: [
         { title: 'Chipmaker unveils new AI accelerator', url: 'https://news.example.test/chip', content: 'A new chip for AI workloads was announced.' },
@@ -1097,6 +1111,56 @@ test('Spin: a new cover photo from the photo libraries, never one already used',
   const media = await request(app).get('/api/admin/media').set(as('editor')).expect(200);
   assert.ok(media.body.items.some((m) => m.url === one.body.photo.url), 'kept in the media library');
   await spin({ title: '' }).expect(400);
+});
+
+test('Autopilot rotation: each post goes to the category with the fewest recent posts, and its subject is searched', async () => {
+  const [cyber, crypto, space, aiCat] = await Promise.all(['cybersecurity', 'blockchain-crypto', 'space-science', 'ai'].map((slug) => Category.findOne({ slug })));
+  assert.ok(cyber && crypto && space, 'the default categories were set up by the migration');
+  assert.equal((await aiSettingsWith({ researchProviders: ['gemini', 'openai', 'anthropic', 'tavily'] })).status, 200);
+  const before = (await SiteSettings.getSingleton()).autopilot;
+  await SiteSettings.updateOne({ key: 'site' }, { $set: { 'autopilot.category': null, 'autopilot.rotationCategories': [cyber._id, crypto._id, space._id], 'autopilot.evergreenTopics': [] } });
+  const made = [];
+  const start = async (kind = 'trending') => {
+    const job = await startAutopilotPost('test', kind);
+    made.push(job._id);
+    return job;
+  };
+  sim.pickUnique = true;
+  sim.newsQueries = [];
+  sim.picks = [];
+  try {
+    const j1 = await start();
+    assert.equal(String(j1.input.category), String(cyber._id));
+    assert.equal(String(j1.autopilot.category), String(cyber._id));
+    assert.ok(sim.newsQueries.some((q) => /cybersecurity/i.test(q)), sim.newsQueries.join(' | '));
+    assert.equal(String((await start()).input.category), String(crypto._id));
+    assert.equal(String((await start('evergreen')).input.category), String(space._id), 'evergreen guides rotate too');
+    assert.equal(String((await start()).input.category), String(cyber._id), 'then round again, longest-waiting first');
+
+    // A subject with nothing new is skipped for the next one.
+    sim.pickDupFor = 'blockchain';
+    const j5 = await start();
+    assert.equal(String(j5.input.category), String(space._id));
+    assert.ok(sim.picks.some((n) => /blockchain/.test(n)), 'crypto was tried first');
+    assert.ok(await ActivityLog.exists({ action: 'autopilot.started', summary: /for Space & Science \(skipped Blockchain & Crypto: nothing new\)/ }));
+    sim.pickDupFor = '';
+
+    // The Autopilot page shows what comes next.
+    const view = await request(app).get('/api/admin/autopilot').set(as('admin')).expect(200);
+    assert.equal(view.body.rotation.length, 3);
+    assert.equal(view.body.rotation[0].name, 'Blockchain & Crypto');
+
+    // A fixed category switches the rotation off.
+    await SiteSettings.updateOne({ key: 'site' }, { $set: { 'autopilot.category': cyber._id } });
+    const fixed = await start();
+    assert.equal(String(fixed.input.category), String(cyber._id));
+    assert.equal(fixed.autopilot.category, undefined);
+  } finally {
+    sim.pickUnique = false;
+    sim.pickDupFor = '';
+    await ResearchJob.deleteMany({ _id: { $in: made } }); // not for the job runner
+    await SiteSettings.updateOne({ key: 'site' }, { $set: { 'autopilot.category': before.category || aiCat?._id || null, 'autopilot.rotationCategories': [], 'autopilot.evergreenTopics': before.evergreenTopics || [] } });
+  }
 });
 
 test('Autopilot schedule: four posts a day in India time', () => {

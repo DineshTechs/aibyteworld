@@ -473,6 +473,32 @@ test('post previews leave out citation numbers; old previews are cleaned once', 
   await Article.deleteOne({ _id: a._id });
 });
 
+test('categories: default topics are added once and posts are filed by topic', async () => {
+  const { guessCategorySlugs, setUpCategories } = await import('../src/services/categories.js');
+  const { SiteSettings, Category } = await import('../src/models/index.js');
+  assert.deepEqual(guessCategorySlugs({ title: 'How to Secure Home Wi-Fi: Simple Steps', keyword: 'secure home wifi' }), ['cybersecurity', 'guides']);
+  assert.deepEqual(guessCategorySlugs({ title: 'Bitcoin ETF inflows hit record as crypto rallies' }), ['blockchain-crypto']);
+  assert.deepEqual(guessCategorySlugs({ title: 'Nvidia CEO steps down', keyword: 'Nvidia CEO exit', text: 'AI chips' }), ['ai-news']);
+  assert.deepEqual(guessCategorySlugs({ title: '5 steps to protect your passwords from hackers' }), ['cybersecurity', 'guides'], 'guide wording still counts');
+  assert.deepEqual(guessCategorySlugs({ title: 'A quiet afternoon' }), ['technology']);
+  assert.deepEqual(guessCategorySlugs({ title: 'Samsung Galaxy S26 review: the best Android phone this year' }), ['gadgets-devices']);
+  assert.deepEqual(guessCategorySlugs({ title: 'SpaceX Starship completes orbital test flight' }), ['space-science']);
+  assert.deepEqual(guessCategorySlugs({ title: 'Tesla robotaxi rollout expands to three new cities' }), ['ev-mobility']);
+  assert.deepEqual(guessCategorySlugs({ title: 'AWS outage takes down thousands of websites', text: 'cloud servers and data centers' }), ['cloud-data']);
+  assert.deepEqual(guessCategorySlugs({ title: 'Python 3.14 release: what developers need to know' }), ['programming']);
+  assert.deepEqual(guessCategorySlugs({ title: 'WhatsApp adds new privacy features to its app' }), ['apps-software']);
+
+  await SiteSettings.getSingleton();
+  await SiteSettings.updateOne({ key: 'site' }, { $pull: { setupDone: { $in: ['categories-v1', 'categories-v2'] } } });
+  const post = await Article.create({ title: 'AI chatbots for small business customer support', slug: 'category-test', author: ids.admin, content: '<p>Small businesses use chatbots for customer support and sales.</p>', contentText: 'Small businesses use chatbots for customer support and sales.' });
+  assert.equal(await setUpCategories(), true);
+  for (const slug of ['ai-news', 'ai-in-business', 'cybersecurity', 'blockchain-crypto', 'gadgets-devices', 'apps-software', 'cloud-data', 'programming', 'space-science', 'ev-mobility', 'guides', 'technology']) assert.ok(await Category.exists({ slug }), slug);
+  const filed = await Article.findById(post._id).populate('categories', 'slug').lean();
+  assert.deepEqual(filed.categories.map((c) => c.slug), ['ai-in-business']);
+  assert.equal(await setUpCategories(), false, 'runs once');
+  await Article.deleteOne({ _id: post._id });
+});
+
 test('unknown routes return JSON 404', async () => {
   const res = await request(app).get('/api/nope').expect(404);
   assert.ok(res.body.error);
