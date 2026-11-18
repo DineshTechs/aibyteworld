@@ -1,51 +1,87 @@
-# Deploying aibyte.world from GitHub
+# Deploying aibyte.world on MilesWeb (cPanel Node.js hosting)
 
-The blog is one Node.js app: the API server also serves the built website, with
-search-engine tags written into each page. Any host that runs Node.js apps from a
-GitHub repository works (for example Hostinger Node.js apps, Render, Railway, or a VPS).
+The blog is one Node.js app: the API server also serves the built website
+(`client/dist`, committed to the repository) with search-engine tags in each page.
+On MilesWeb it runs under cPanel's Node.js tool (CloudLinux "Setup Node.js App" or
+"Application Manager"), which uses Phusion Passenger.
 
-## Host settings
+## 1. Connect GitHub and create the app (MilesWeb GitHub deploy)
+
+In the MilesWeb panel, create a Node.js app from GitHub and choose:
 
 | Setting | Value |
 | --- | --- |
-| Repository | this repository, branch `main` (auto-deploy on push) |
-| Root directory | the repository root |
-| Node.js version | 20 or newer (developed on 24) |
-| Build command | `npm run build` |
-| Start command | `npm start` |
-| Port | the host's `PORT` variable (the app reads `PORT`; 5000 if not set) |
+| Repository / branch | `DineshTechs/aibyteworld`, branch `main` (turn on auto-deploy on push) |
+| Application root | the repository root (the folder with `package.json` and `app.js`) |
+| Node.js version | 20 or newer (22 or 24 if offered) |
+| Application mode | Production |
+| Domain / URL | `aibyte.world` (no path) |
+| Startup file | `app.js` |
+| Install command (if asked) | `npm install` |
+| Build command (if asked) | leave empty: the website is already built in `client/dist` |
+| Start command (if asked) | `npm start` |
 
-## Environment variables (set in the host's dashboard, never in the repository)
+The install reads the root `package.json` (the server's packages and the `sharp` photo
+optimiser). If the panel has a **Run NPM Install** button instead, click it after the first deploy.
 
-| Variable | Value |
-| --- | --- |
-| `NODE_ENV` | `production` |
-| `MONGODB_URI` | your MongoDB Atlas connection string |
-| `DB_NAME` | `blogsite` (the same database you use now keeps all posts and settings) |
-| `JWT_SECRET` | the value from your `server\.env` (or a new 64-character random string; everyone then signs in again) |
-| `SECRETS_KEY` | **the exact value from your `server\.env`**. It decrypts the API keys saved in the dashboard; a different value means re-entering every key |
-| `CLIENT_ORIGIN` | `https://aibyte.world,https://www.aibyte.world` |
-| `UPLOAD_MAX_MB` | `5` (optional) |
+### If GitHub deploy is not available on your plan
+cPanel → **Git Version Control** can clone the private repository with a deploy key
+(cPanel → SSH Access → generate a key → GitHub repo → Settings → Deploy keys), into
+`/home/<cpanel-user>/aibyteworld`; then cPanel → **Setup Node.js App** with the values above,
+and **Update from Remote** + **Restart** for each new version.
 
-In MongoDB Atlas → Network Access, allow the host's outgoing IP address (or 0.0.0.0/0 if the host has no fixed IP).
+## 2. Settings: upload `server/.env`
 
-## After the first deploy
+Easiest: with cPanel → **File Manager**, upload your PC's `D:\WebApps\blogSite\server\.env`
+to `/home/<cpanel-user>/aibyteworld/server/.env` and change two lines:
 
-1. Point the domain `aibyte.world` (and `www`) at the host and turn on HTTPS.
-2. Sign in at `https://aibyte.world/admin` → Website Settings → **Site URL** = `https://aibyte.world`.
-   Sharing, IndexNow, newsletter links, the sitemap and canonical tags use it.
-3. Google Search Console and Bing Webmaster Tools: add the site, paste the verification codes in
-   Website Settings → Analytics, then submit `https://aibyte.world/sitemap.xml`.
-4. Growth & Sharing → IndexNow → “Send my latest 50 posts now”.
+```
+NODE_ENV=production
+CLIENT_ORIGIN=https://aibyte.world,https://www.aibyte.world
+```
 
-## Things to know
+Keep `MONGODB_URI`, `DB_NAME`, `JWT_SECRET` and especially **`SECRETS_KEY` exactly as they are**:
+`SECRETS_KEY` decrypts the API keys saved in the dashboard. The file is never in Git, and
+redeploys from GitHub do not touch it (if your plan replaces the whole folder on each deploy, enter the values as environment variables instead). (The same values can instead be entered as
+environment variables in the app's settings.)
 
-- **Run one copy only.** Autopilot, the scheduler and the Telegram bot run inside the app. Stop the
-  copy on your PC (close the start-dev windows) once the hosted site uses the same database;
-  two copies would both poll the Telegram bot and Telegram allows only one.
-- **Keep it awake.** Free plans that sleep when idle also pause Autopilot and Telegram.
-- **Uploaded and downloaded photos live in `server/uploads`.** Use a host with a persistent disk
-  (or a mounted volume at `server/uploads`); on hosts whose disk is wiped on each deploy, photos
-  saved earlier disappear. Copy your current `server\uploads` folder to the host once, so existing
-  posts keep their photos.
-- `sharp` (photo optimiser) installs prebuilt binaries for Linux automatically.
+MongoDB Atlas → **Network Access** → add the server's IP address (cPanel shows it as
+"Shared IP Address"), or 0.0.0.0/0.
+
+Restart the app in the panel and open https://aibyte.world.
+
+## 3. Photos
+
+Photos live in `server/uploads` (not in Git). Upload your PC's
+`D:\WebApps\blogSite\server\uploads` folder once (zip it, upload with File Manager,
+extract) so existing posts keep their photos.
+
+After the first redeploy from GitHub, check that a post's photo still shows. If MilesWeb
+replaces the whole app folder on each deploy, photos would be lost each time: ask MilesWeb
+support to keep `server/uploads` between deploys (a persistent folder), and keep a copy.
+
+## 4. Keep it running (important)
+
+Passenger starts the app on the first visit and can stop it when nobody visits, which
+also pauses Autopilot, the newsletter and the Telegram bot. Add a cron job:
+cPanel → **Cron Jobs** → every 5 minutes (`*/5 * * * *`):
+
+```
+curl -fsS https://aibyte.world/api/health > /dev/null
+```
+
+Run **one copy only**: stop the start-dev windows on your PC once the hosted site is live
+(both use the same database, and Telegram allows one bot connection). If MilesWeb runs
+several Passenger processes for the app, ask support to limit it to one instance.
+
+## 5. After the first deploy
+
+1. Sign in at https://aibyte.world/admin → Website Settings → **Site URL** = `https://aibyte.world`.
+2. Google Search Console and Bing Webmaster Tools: paste the verification codes in Website
+   Settings → Analytics, then submit `https://aibyte.world/sitemap.xml`.
+3. Growth & Sharing → IndexNow → “Send my latest 50 posts now”.
+
+## Updating
+
+On your PC run `push-to-github.bat`: it builds the website, commits and pushes, and MilesWeb
+redeploys from GitHub. If a new version needs new packages, run the install again in the panel.

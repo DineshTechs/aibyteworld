@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# The built website is committed, so the host does not need to build it.
+!client/dist/
 .env
 logs/
 server/uploads/*

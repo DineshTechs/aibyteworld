@@ -286,4 +286,4 @@ blog server is running.
 - `docs/API.md` — REST API reference
 - `docs/DATABASE.md` — collections and indexes
 
-- `DEPLOYMENT.md` — deploying from GitHub to a Node.js host (aibyte.world)
+- `DEPLOYMENT.md` — deploying aibyte.world on MilesWeb from GitHub

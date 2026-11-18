@@ -4,6 +4,7 @@ rem The first push opens a GitHub sign-in window (Git Credential Manager).
 rem Later updates: run this again, or: git add -A, git commit -m "...", git push
 setlocal
 cd /d "%~dp0"
+if not exist logs mkdir logs
 set REPO=https://github.com/DineshTechs/aibyteworld.git
 
 where git >nul 2>&1 || (echo Git is not installed: https://git-scm.com/download/win & pause & exit /b 1)
@@ -25,6 +26,11 @@ if not exist .git (
 )
 
 git check-ignore -q server\.env || (echo STOP: server\.env would be uploaded. Nothing was uploaded. & pause & exit /b 1)
+
+rem Build the website: the host runs the built copy in client\dist.
+echo Building the website (about a minute)...
+call npm --prefix client run build > logs\build.log 2>&1 || (echo Website build failed - see logs\build.log. Nothing was uploaded. & pause & exit /b 1)
+if not exist client\dist\index.html (echo Website build is missing. Nothing was uploaded. & pause & exit /b 1)
 
 rem Commit any later changes.
 git add -A
