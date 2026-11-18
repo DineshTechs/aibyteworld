@@ -258,7 +258,13 @@ test('Google Analytics and Search Console settings: validated, public where need
   assert.equal(ok.body.settings.analytics.gaMeasurementId, 'G-TEST123ABC');
   assert.equal(ok.body.settings.analytics.googleVerification, 'AbC_123-verifyCode9');
   const pub = await request(app).get('/api/public/settings').expect(200);
-  assert.deepEqual(pub.body.settings.analytics, { enabled: true, gaMeasurementId: 'G-TEST123ABC', consentBanner: true });
+  assert.deepEqual(pub.body.settings.analytics, { enabled: true, gaMeasurementId: 'G-TEST123ABC', gtmContainerId: '', consentBanner: true });
+  // Tag Manager: the ID is taken out of a pasted snippet; anything else is refused.
+  await request(app).put('/api/admin/settings').set(as('admin')).send({ ...base, analytics: { gtmContainerId: 'hello' } }).expect(400);
+  const snippet = '<script async src="https://www.googletagmanager.com/gtm.js?id=GTM-5J36KQRM"></script>';
+  const g = await request(app).put('/api/admin/settings').set(as('admin')).send({ ...base, analytics: { gaMeasurementId: 'G-TEST123ABC', gtmContainerId: snippet, googleVerification: 'AbC_123-verifyCode9', bingVerification: '0123456789ABCDEF0123456789ABCDEF' } }).expect(200);
+  assert.equal(g.body.settings.analytics.gtmContainerId, 'GTM-5J36KQRM');
+  assert.equal((await request(app).get('/api/public/settings').expect(200)).body.settings.analytics.gtmContainerId, 'GTM-5J36KQRM');
   const { renderHead, headToHtml } = await import('../src/services/seoService.js');
   const head = headToHtml(await renderHead('/', 'https://blog.example.test'), 'Test Blog');
   assert.match(head, /<meta name="google-site-verification" content="AbC_123-verifyCode9" \/>/);

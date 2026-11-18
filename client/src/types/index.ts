@@ -139,6 +139,7 @@ export interface SiteSettings {
 export interface AnalyticsSettings {
   enabled: boolean;
   gaMeasurementId: string;
+  gtmContainerId?: string;
   consentBanner: boolean;
   // Admin settings only (not in the public settings).
   googleVerification?: string;

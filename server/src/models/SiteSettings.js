@@ -28,6 +28,7 @@ const siteSettingsSchema = new mongoose.Schema(
     analytics: {
       enabled: { type: Boolean, default: true }, // built-in, cookie-free view and read counts
       gaMeasurementId: { type: String, default: '', maxlength: 30 }, // Google Analytics 4, e.g. G-ABC123XYZ
+      gtmContainerId: { type: String, default: '', maxlength: 20 }, // Google Tag Manager, e.g. GTM-ABC1234
       consentBanner: { type: Boolean, default: true }, // ask visitors before loading Google Analytics
       googleVerification: { type: String, default: '', maxlength: 120 }, // Search Console HTML tag
       bingVerification: { type: String, default: '', maxlength: 120 }, // Bing Webmaster Tools

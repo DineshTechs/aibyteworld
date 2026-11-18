@@ -136,8 +136,31 @@ export function gaPageView(path: string) {
   window.gtag('event', 'page_view', { page_path: path, page_location: window.location.href, page_title: document.title });
 }
 
+// ---------- Google Tag Manager ----------
+// Loaded on the same terms as Google Analytics. The site is a single-page app,
+// so each route change is pushed as a "page_view" event: in Tag Manager, fire
+// page tags on the Custom Event trigger "page_view" (or History Change).
+let gtmLoadedId = '';
+
+export function loadTagManager(id: string) {
+  if (!/^GTM-[A-Z0-9]{4,12}$/.test(id) || gtmLoadedId === id || skip()) return;
+  gtmLoadedId = id;
+  window.dataLayer = window.dataLayer || [];
+  window.dataLayer.push({ 'gtm.start': Date.now(), event: 'gtm.js' });
+  const script = document.createElement('script');
+  script.async = true;
+  script.src = `https://www.googletagmanager.com/gtm.js?id=${encodeURIComponent(id)}`;
+  document.head.appendChild(script);
+}
+
+export function gtmPageView(path: string) {
+  if (!gtmLoadedId || !window.dataLayer) return;
+  window.dataLayer.push({ event: 'page_view', page_path: path, page_location: window.location.href, page_title: document.title });
+}
+
 // Withdrawing consent: stop sending and remove Google Analytics cookies.
 export function stopGoogleAnalytics() {
+  if (gtmLoadedId && window.dataLayer) window.dataLayer.push({ event: 'consent_withdrawn' });
   if (window.gtag) window.gtag('consent', 'update', { analytics_storage: 'denied' });
   for (const c of document.cookie.split(';')) {
     const name = c.split('=')[0].trim();

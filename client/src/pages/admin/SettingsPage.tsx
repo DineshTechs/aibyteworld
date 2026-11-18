@@ -53,7 +53,7 @@ export default function SettingsPage() {
     setBusy(true);
     try {
       const { siteName, tagline, description, siteUrl, contactEmail, contactAddress, social, pages, postsPerPage, allowIndexing, analytics } = form;
-      const { enabled, gaMeasurementId, consentBanner, googleVerification = '', bingVerification = '' } = analytics;
+      const { enabled, gaMeasurementId, gtmContainerId = '', consentBanner, googleVerification = '', bingVerification = '' } = analytics;
       const res = await api.put<{ settings: SiteSettings }>('/admin/settings', {
         siteName,
         tagline,
@@ -65,7 +65,7 @@ export default function SettingsPage() {
         pages,
         postsPerPage: Number(postsPerPage),
         allowIndexing,
-        analytics: { enabled, gaMeasurementId, consentBanner, googleVerification, bingVerification },
+        analytics: { enabled, gaMeasurementId, gtmContainerId, consentBanner, googleVerification, bingVerification },
       });
       // Show the cleaned-up values (e.g. the code taken out of a pasted <meta> tag).
       setForm((f) => (f ? { ...f, analytics: { ...f.analytics, ...res.settings.analytics } } : f));
@@ -185,9 +185,20 @@ export default function SettingsPage() {
               </a>
               : Admin → Data streams → Add stream → Web, enter {base}, then copy the Measurement ID. Leave empty to not use Google Analytics.
             </p>
+            <label htmlFor="gtm-id" className="label pt-2">
+              Google Tag Manager container ID (optional)
+            </label>
+            <input id="gtm-id" className="input font-mono" maxLength={4000} value={form.analytics.gtmContainerId || ''} onChange={(e) => setA({ gtmContainerId: e.target.value })} placeholder="GTM-ABC1234" />
+            <p className="text-xs text-stone-500">
+              Paste the ID or the snippet from{' '}
+              <a href="https://tagmanager.google.com/" target="_blank" rel="noopener noreferrer" className="text-brand-700 hover:underline dark:text-brand-300">
+                Tag Manager
+              </a>
+              . Each page change is sent as the event <code>page_view</code>: use a Custom Event trigger with that name for page tags. Custom HTML tags are blocked by the site's security rules; use Google's built-in tag types.
+            </p>
             <label className="flex gap-2 text-sm">
               <input type="checkbox" checked={form.analytics.consentBanner} onChange={(e) => setA({ consentBanner: e.target.checked })} />
-              <span>Ask visitors before loading Google Analytics (cookie banner). Recommended, and required for visitors from the EU and UK.</span>
+              <span>Ask visitors before loading Google Analytics or Tag Manager (cookie banner). Recommended, and required for visitors from the EU and UK.</span>
             </label>
           </div>
 
@@ -216,7 +227,7 @@ export default function SettingsPage() {
           </div>
         </div>
         {!form.siteUrl && <p className="rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">Set the Public site URL above first: search engines and Google Analytics need your real web address.</p>}
-        {form.analytics.gaMeasurementId && !form.pages.privacy.replace(/<[^>]+>/g, '').trim() && (
+        {(form.analytics.gaMeasurementId || form.analytics.gtmContainerId) && !form.pages.privacy.replace(/<[^>]+>/g, '').trim() && (
           <p className="rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">Google Analytics requires a privacy policy that mentions it. Your Privacy Policy page is empty.</p>
         )}
         <button type="button" className="btn btn-sm" onClick={starterPrivacy}>
@@ -245,7 +256,7 @@ function privacyTemplate(f: SiteSettings): string {
   const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const site = esc(f.siteName || 'this website');
   const contact = f.contactEmail ? `<a href="mailto:${esc(f.contactEmail)}">${esc(f.contactEmail)}</a>` : 'the contact page';
-  const ga = f.analytics.gaMeasurementId
+  const ga = f.analytics.gaMeasurementId || f.analytics.gtmContainerId
     ? `<h2>Google Analytics</h2><p>If you accept cookies, we also use Google Analytics, a service by Google, to understand how visitors use the site (for example which pages are visited and roughly which country visitors come from). Google Analytics sets cookies and processes your IP address; we ask Google not to use the data for advertising. You can decline or change your choice at any time with “Cookie settings” at the bottom of every page. See <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Google's privacy policy</a>.</p>`
     : '';
   return `<p>This policy explains what information ${site} collects and how it is used. Last updated: ${new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}.</p>

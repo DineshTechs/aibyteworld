@@ -79,6 +79,7 @@ export const settings = asyncHandler(async (_req, res) => {
       analytics: {
         enabled: s.analytics?.enabled !== false,
         gaMeasurementId: s.analytics?.gaMeasurementId || '',
+        gtmContainerId: s.analytics?.gtmContainerId || '',
         consentBanner: s.analytics?.consentBanner !== false,
       },
       languages, // other languages that have published posts

@@ -124,6 +124,18 @@ export const settingsSchema = z.object({
         .transform((v) => v.toUpperCase())
         .refine((v) => v === '' || /^G-[A-Z0-9]{4,20}$/.test(v), 'A Google Analytics 4 measurement ID looks like G-ABC123XYZ')
         .default(''),
+      // Accepts the container ID or the whole snippet copied from Tag Manager.
+      gtmContainerId: z
+        .string()
+        .max(4000)
+        .transform((v) => {
+          const t = v.trim();
+          if (!t) return '';
+          const m = t.toUpperCase().match(/GTM-[A-Z0-9]{4,12}/);
+          return m ? m[0] : '#invalid';
+        })
+        .refine((v) => v !== '#invalid', 'A Google Tag Manager container ID looks like GTM-ABC1234')
+        .default(''),
       consentBanner: z.boolean().default(true),
       googleVerification: verificationCode('Google Search Console'),
       bingVerification: verificationCode('Bing Webmaster Tools'),
@@ -189,7 +201,7 @@ export const analytics = asyncHandler(async (req, res) => {
   res.json({
     ...(await analyticsOverview(days)),
     tracking: settings.analytics?.enabled !== false,
-    googleAnalytics: Boolean(settings.analytics?.gaMeasurementId),
+    googleAnalytics: Boolean(settings.analytics?.gaMeasurementId || settings.analytics?.gtmContainerId),
     searchConsole: Boolean(settings.analytics?.googleVerification),
   });
 });

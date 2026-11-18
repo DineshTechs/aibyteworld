@@ -13,7 +13,7 @@ export const DEFAULT_SETTINGS: SiteSettings = {
   pages: { about: '', privacy: '', terms: '' },
   postsPerPage: 9,
   allowIndexing: true,
-  analytics: { enabled: true, gaMeasurementId: '', consentBanner: true },
+  analytics: { enabled: true, gaMeasurementId: '', gtmContainerId: '', consentBanner: true },
 };
 
 const SettingsContext = createContext<{ settings: SiteSettings; loaded: boolean; refresh: () => void }>({

@@ -23,13 +23,13 @@ export function createApp() {
         useDefaults: true,
         directives: {
           // The website only loads its own script files (no inline scripts),
-          // plus Google Analytics when it is set up and the visitor agrees.
-          'script-src': ["'self'", 'https://www.googletagmanager.com'],
+          // plus Google Analytics / Tag Manager when set up and the visitor agrees.
+          'script-src': ["'self'", 'https://www.googletagmanager.com', 'https://*.googletagmanager.com', 'https://www.google-analytics.com', 'https://tagmanager.google.com'],
           'img-src': ["'self'", 'data:', 'https:'],
           // Google Search Suggestions in the admin research viewer.
           'frame-src': ["'self'"],
           'style-src': ["'self'", "'unsafe-inline'", 'https:'],
-          'connect-src': ["'self'", 'https://*.google-analytics.com', 'https://*.analytics.google.com', 'https://www.googletagmanager.com'],
+          'connect-src': ["'self'", 'https://*.google-analytics.com', 'https://*.analytics.google.com', 'https://www.googletagmanager.com', 'https://*.googletagmanager.com'],
           'upgrade-insecure-requests': null,
         },
       },
