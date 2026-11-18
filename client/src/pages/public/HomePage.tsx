@@ -46,10 +46,32 @@ export default function HomePage() {
   const latest = data.featured.length ? data.latest.filter((a) => !featuredIds.has(a._id)) : data.latest.slice(1);
   const lead = data.featured[0] || data.latest[0];
   const secondary = data.featured.slice(1, 4);
+  // A one-person blog: name the author in the intro. Hidden once posts come from several authors.
+  const writers = new Map([...data.featured, ...data.latest].filter((a) => a.author).map((a) => [a.author!._id, a.author!]));
+  const soleAuthor = writers.size === 1 ? [...writers.values()][0] : null;
 
   return (
     <div className="container-page py-8">
       <Seo jsonLd={organization} />
+      <section aria-label="About this site" className="mb-8 border-b border-stone-200 pb-6 dark:border-stone-800">
+        <h1 className="text-3xl font-semibold leading-tight text-stone-900 dark:text-stone-50 sm:text-4xl">{settings.tagline || settings.siteName}</h1>
+        {settings.description && <p className="mt-2 max-w-2xl text-stone-600 dark:text-stone-400">{settings.description}</p>}
+        <p className="mt-3 text-sm text-stone-500 dark:text-stone-400">
+          {soleAuthor && (
+            <>
+              By{' '}
+              <Link to={`/author/${soleAuthor._id}`} className="font-medium text-stone-800 hover:underline dark:text-stone-200">
+                {soleAuthor.name}
+              </Link>
+              {soleAuthor.jobTitle ? `, ${soleAuthor.jobTitle}` : ''}
+              <span aria-hidden="true"> · </span>
+            </>
+          )}
+          <Link to="/about" className="font-medium text-brand-700 hover:underline dark:text-brand-300">
+            About this site
+          </Link>
+        </p>
+      </section>
       {!lead ? (
         <EmptyState title="No articles have been published yet">Check back soon.</EmptyState>
       ) : (

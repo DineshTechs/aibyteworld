@@ -89,11 +89,40 @@ const clipAlt = (s) => {
   return out.charAt(0).toUpperCase() + out.slice(1);
 };
 
+// Photos that do not suit a technology news site whatever the search was:
+// archive scans and documents, maps, old artwork, film/comic/toy pictures
+// (also someone else's characters), logos, and anything dated before 1950.
+export const UNSUITABLE_PHOTO =
+  /\b(?:nypl|scan(?:ned)? by|manuscripts?|handwritten|hand-written|deeds?|land survey|survey of land|maps?|atlas|engravings?|lithographs?|etchings?|woodcuts?|illustrations? from|plate \d+|page \d+|herbarium|specimens?|postage stamps?|postcards?|newspapers?|magazine covers?|book covers?|posters?|comics?|cosplay|superheroe?s?|justice league|avengers|marvel|star wars|movies?|film stills?|trailers?|album covers?|lego|action figures?|toys?|memes?|logos?|coat of arms|flag of)\b|\b1[5-8]\d\d\b|\b19[0-4]\d\b/i;
+
+// Words too common to show that a photo matches a search ("review", "people").
+const GENERIC_WORDS = new Set(
+  'the and for with from into about using use used uses new best top how what why who your you our their this that these those more most very than then them they are was were has have had not but can will just like over under after before during while modern digital online review reviewing reviews guide guides tips ways people person man woman men women team working work works someone something image photo picture shot view concept background closeup close-up looking showing shows small large big good great high low simple'.split(' '),
+);
+const stems = (s) => new Set((String(s || '').toLowerCase().match(/[a-z]{3,}/g) || []).filter((w) => !GENERIC_WORDS.has(w)).map((w) => w.slice(0, 5)));
+
+/**
+ * Does a search result suit the post? Unsuitable kinds of picture are always
+ * skipped. Results from the open libraries (Openverse, Wikimedia, NASA) are
+ * matched loosely by their sources, so they must also share at least one
+ * meaningful word with the search; Pexels, Unsplash and Pixabay rank their
+ * own results by relevance and are trusted.
+ */
+export function photoFits(r, query) {
+  const text = [r.credit?.title, r.alt, r.keywords].filter(Boolean).join(' ');
+  if (UNSUITABLE_PHOTO.test(text)) return false;
+  if (!r.open) return true;
+  const wanted = stems(query);
+  if (!wanted.size) return true;
+  const have = stems(text);
+  return [...wanted].some((w) => have.has(w));
+}
+
 // One photo from one library: the best match not used in this post or on the site before.
 async function fromProvider(p, brief, ctx) {
   const adapter = getAdapter(p.key);
   const results = await adapter.search({ apiKey: p.apiKey, query: brief.query, perPage: 10, appName: ctx.appName, contact: ctx.contact });
-  const fresh = results.filter((r) => r.url && !ctx.used.has(r.id) && ((r.width || 0) >= 800 || r.sizeUnknown));
+  const fresh = results.filter((r) => r.url && !ctx.used.has(r.id) && ((r.width || 0) >= 800 || r.sizeUnknown) && photoFits(r, brief.query));
   const usedBefore = new Set((await Media.find({ sourceId: { $in: fresh.map((r) => r.id) } }, 'sourceId').lean()).map((m) => m.sourceId));
   const candidates = fresh.filter((r) => !usedBefore.has(r.id));
   // Covers of 1200 px or wider can appear as large cards in Google Discover.
@@ -131,6 +160,34 @@ async function fromProvider(p, brief, ctx) {
 }
 
 // H2 sections that get a picture, spread through the article.
+// Words left out of a photo search made from a post title.
+const SEARCH_STOP = new Set(
+  'a an the and or of for to in on at by with from into about how what why when who your you our is are was were be it its this that these those vs versus best top guide guides tips ways new simple steps step complete ultimate 2024 2025 2026 2027'.split(' '),
+);
+
+/** A short photo search from a post's focus keyword or title. */
+export function photoQuery(title, keyword = '') {
+  const words = (s) => plainText(s).replace(/[^\p{L}\p{N}\s-]/gu, ' ').split(/\s+/).filter((w) => w && !SEARCH_STOP.has(w.toLowerCase()));
+  const fromKeyword = words(keyword);
+  return (fromKeyword.length >= 2 ? fromKeyword : [...fromKeyword, ...words(title)]).slice(0, 5).join(' ');
+}
+
+/**
+ * "Spin": one new cover photo for a post. Photos already used anywhere on the
+ * site are skipped, so each spin brings a different one. `turn` rotates which
+ * library is asked first, so repeated spins also look in different places.
+ */
+export async function spinCoverPhoto({ chain, title, keyword, turn = 0, appName, contact, uploadedBy }) {
+  const query = photoQuery(title, keyword);
+  if (!query) throw new AiError('Add a title first, so there is something to search for.', { code: 'no_results' });
+  const n = chain.length ? turn % chain.length : 0;
+  const order = [...chain.slice(n), ...chain.slice(0, n)];
+  const brief = { role: 'cover', query, alt: plainText(title).slice(0, 125) };
+  const ctx = { used: new Set(), appName, contact, uploadedBy };
+  const { result } = await runWithFailover(order, 'image', (p) => fromProvider(p, brief, ctx));
+  return { ...result, query };
+}
+
 export function pickSections(html, count) {
   const heads = [...String(html).matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)].map((m, i) => ({ i, heading: htmlToText(m[1]).trim() })).filter((h) => h.heading && !SKIP_HEADING.test(h.heading));
   if (!count || !heads.length) return [];

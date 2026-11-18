@@ -1,6 +1,7 @@
 import { logger } from '../config/logger.js';
 import { DEFAULT_IMAGE_ORDER, DEFAULT_RESEARCH_ORDER, DEFAULT_WRITER_ORDER, PROVIDER_INFO } from '../integrations/ai/index.js';
 import { Article, SiteSettings } from '../models/index.js';
+import { withoutCitationMarks } from '../utils/content.js';
 
 // Safe, repeatable data updates run at server start.
 //
@@ -22,8 +23,21 @@ export async function fixArticleTextIndex() {
   return true;
 }
 
+// Post previews (excerpts) made by older versions can contain citation
+// numbers such as "[1]". They are removed once; the article text keeps them.
+export async function cleanExcerpts() {
+  const posts = await Article.find({ excerpt: /\[\d+/ }, 'excerpt').lean();
+  for (const p of posts) {
+    // eslint-disable-next-line no-await-in-loop
+    await Article.updateOne({ _id: p._id }, { $set: { excerpt: withoutCitationMarks(p.excerpt).trim() } });
+  }
+  if (posts.length) logger.info(`Removed citation numbers from ${posts.length} post preview(s)`);
+  return posts.length;
+}
+
 export async function runMigrations() {
   await fixArticleTextIndex();
+  await cleanExcerpts();
   const s = await SiteSettings.getSingleton();
   const ai = s.ai;
   // Image sources that no longer exist (AI image generation was removed) leave the list.

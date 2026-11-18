@@ -111,6 +111,9 @@ export const openverse = {
         width: p.width || 0,
         height: p.height || 0,
         alt: '', // titles are often file names; the article's own alt text is used
+        // Words that describe the photo, checked against the search (see photoFits).
+        open: true,
+        keywords: [p.title, ...(p.tags || []).map((t) => t.name)].join(' ').slice(0, 1000),
         credit: {
           name: p.creator || 'Unknown creator',
           profileUrl: p.creator_url || '',
@@ -203,6 +206,8 @@ export const wikimedia = {
           width: Math.min(ii.thumbwidth || ii.width, ii.width),
           height: ii.thumbwidth && ii.thumbwidth < ii.width ? ii.thumbheight : ii.height,
           alt: '',
+          open: true,
+          keywords: [title, meta(ii, 'ImageDescription'), meta(ii, 'Categories')].join(' ').slice(0, 1000),
           credit: {
             name: meta(ii, 'Artist').slice(0, 100) || 'Unknown author',
             profileUrl: '',
@@ -250,6 +255,8 @@ export const nasa = {
         height: 0,
         sizeUnknown: true,
         alt: '',
+        open: true,
+        keywords: stripTags([d.title, d.description, ...(d.keywords || [])].join(' ')).slice(0, 1000),
         credit: { name: stripTags(d.photographer || d.secondary_creator || `NASA${d.center ? ` ${d.center}` : ''}`).slice(0, 100), profileUrl: '', source: 'NASA', sourceUrl: 'https://images.nasa.gov', pageUrl: `https://images.nasa.gov/details/${encodeURIComponent(d.nasa_id)}` },
         hotlink: false,
       }));

@@ -450,6 +450,29 @@ test('wording clean-up removes stock AI phrases without touching links, citation
   assert.equal(polishWording('<p>Moreover, x</p>', 'Hindi').html, '<p>Moreover, x</p>', 'other languages untouched');
 });
 
+test('photo search: old scans, film pictures and loose matches are skipped', async () => {
+  const { photoFits } = await import('../src/services/images/imageService.js');
+  const open = (title, keywords = '') => ({ open: true, alt: '', keywords, credit: { title } });
+  const survey = open("Mahlon Wright's draft of 86 acres (survey of land owned by Mahlon Wright on Doctors Creek) (NYPL b19605260)");
+  assert.equal(photoFits(survey, 'doctor tablet clinic'), false, 'archive scan');
+  assert.equal(photoFits(open('Justice League Review!'), 'executive reviewing financial charts laptop'), false, 'film picture');
+  assert.equal(photoFits(open('Team meeting review', 'meeting'), 'executive reviewing financial charts laptop'), false, 'only a generic word in common');
+  assert.equal(photoFits(open('Laptop showing sales charts', 'finance office'), 'executive reviewing financial charts laptop'), true);
+  assert.equal(photoFits({ open: false, alt: 'Woman at a desk', credit: { title: '' } }, 'executive reviewing financial charts laptop'), true, 'curated libraries are trusted');
+  assert.equal(photoFits({ open: false, alt: 'Vintage movie poster', credit: {} }, 'cinema'), false, 'unsuitable everywhere');
+});
+
+test('post previews leave out citation numbers; old previews are cleaned once', async () => {
+  const { excerptFrom } = await import('../src/utils/content.js');
+  const { cleanExcerpts } = await import('../src/scripts/migrations.js');
+  assert.equal(excerptFrom('The tech world held its breath. [1] Sales rose 9% [2, 3].'), 'The tech world held its breath. Sales rose 9%.');
+  const a = await Article.create({ title: 'Preview cleanup', slug: 'preview-cleanup', author: ids.admin, content: '<p>x</p>', excerpt: 'The world held its breath. [1] The headline was simple [2][3].' });
+  assert.equal(await cleanExcerpts(), 1);
+  assert.equal((await Article.findById(a._id).lean()).excerpt, 'The world held its breath. The headline was simple.');
+  assert.equal(await cleanExcerpts(), 0, 'runs once');
+  await Article.deleteOne({ _id: a._id });
+});
+
 test('unknown routes return JSON 404', async () => {
   const res = await request(app).get('/api/nope').expect(404);
   assert.ok(res.body.error);

@@ -64,8 +64,12 @@ export function makeSlug(value) {
   return slugifyLib(String(value || ''), { lower: true, strict: true, trim: true }).slice(0, 120);
 }
 
+// Citation numbers such as [1] or [2, 3]: right in the article, noise in a preview.
+export const CITATION_MARKS = /\s*\[\d+(?:\s*[,\u2013-]\s*\d+)*\]/g;
+export const withoutCitationMarks = (s) => String(s || '').replace(CITATION_MARKS, '').replace(/\s+([.,;:!?])/g, '$1');
+
 export function excerptFrom(text, max = 180) {
-  const t = String(text || '');
+  const t = withoutCitationMarks(text).trim();
   if (t.length <= max) return t;
   return `${t.slice(0, max).replace(/\s+\S*$/, '')}…`;
 }

@@ -6,7 +6,7 @@ import { asyncHandler, notFound, paged, parsePaging } from '../utils/http.js';
 
 const CARD_FIELDS = 'title slug excerpt featuredImage author categories tags publishedAt readingTime views reads featured language refreshedAt';
 const POPULATE = [
-  { path: 'author', select: 'name avatarUrl' },
+  { path: 'author', select: 'name avatarUrl jobTitle' },
   { path: 'categories', select: 'name slug' },
   { path: 'tags', select: 'name slug' },
 ];

@@ -79,6 +79,7 @@ a.delete('/tags/:id', staff, id, tags.remove);
 
 a.get('/media', media.listMedia);
 a.post('/media/optimize', adminOnly, growth.optimizePhotos);
+a.post('/media/spin', staff, uploadLimiter, validateBody(media.spinSchema), media.spinCover);
 a.post('/media', uploadLimiter, uploadImage, media.uploadMedia);
 a.put('/media/:id', id, validateBody(media.mediaUpdateSchema), media.updateMedia);
 a.delete('/media/:id', id, media.deleteMedia);

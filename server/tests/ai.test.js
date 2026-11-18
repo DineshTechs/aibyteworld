@@ -343,7 +343,7 @@ globalThis.fetch = async (url, init = {}) => {
     sim.pexelsN += 1;
     const n = sim.pexelsN;
     return json(200, { result_count: 3, results: [
-      { id: `ov-${n}`, title: `Server racks ${n}`, url: `https://live.staticflickr.com/1/${n}_b.jpg`, creator: 'Sam <Flickr>', creator_url: 'https://www.flickr.com/photos/sam', license: 'by', license_version: '2.0', license_url: 'https://creativecommons.org/licenses/by/2.0/', source: 'flickr', foreign_landing_url: `https://www.flickr.com/photos/sam/${n}`, width: 2048, height: 1152, filesize: 800000 },
+      { id: `ov-${n}`, title: `Server racks ${n}`, url: `https://live.staticflickr.com/1/${n}_b.jpg`, creator: 'Sam <Flickr>', creator_url: 'https://www.flickr.com/photos/sam', license: 'by', license_version: '2.0', license_url: 'https://creativecommons.org/licenses/by/2.0/', source: 'flickr', foreign_landing_url: `https://www.flickr.com/photos/sam/${n}`, width: 2048, height: 1152, filesize: 800000, tags: [{ name: 'laptop' }, { name: 'office' }] },
       { id: `nc-${n}`, title: 'Not for business', url: 'https://example.org/nc.jpg', creator: 'X', license: 'by-nc', license_version: '4.0', width: 2048, height: 1152 },
     ] });
   }
@@ -354,7 +354,7 @@ globalThis.fetch = async (url, init = {}) => {
     if (sim.wmCoverFail && !/^office scene/.test(query)) return json(200, { batchcomplete: true });
     sim.pexelsN += 1;
     const n = sim.pexelsN;
-    const lic = (name, extra = {}) => ({ LicenseShortName: { value: name }, LicenseUrl: { value: 'https://creativecommons.org/licenses/by-sa/4.0' }, Artist: { value: '<a href="//commons.wikimedia.org/wiki/User:Ann">Ann &amp; Co</a>' }, ObjectName: { value: `Data centre ${n}` }, ...extra });
+    const lic = (name, extra = {}) => ({ LicenseShortName: { value: name }, LicenseUrl: { value: 'https://creativecommons.org/licenses/by-sa/4.0' }, Artist: { value: '<a href="//commons.wikimedia.org/wiki/User:Ann">Ann &amp; Co</a>' }, ObjectName: { value: `Data centre ${n}` }, ImageDescription: { value: 'Laptop and servers in an office' }, ...extra });
     const page = (id, index, ext, extra = {}) => ({ pageid: id, index, title: `File:Data centre ${id}.jpg`, imageinfo: [{ mime: 'image/jpeg', width: 4000, height: 2500, thumburl: `https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/DC${id}.jpg/1280px-DC${id}.jpg`, thumbwidth: 1280, thumbheight: 800, descriptionurl: `https://commons.wikimedia.org/wiki/File:DC${id}.jpg`, extmetadata: ext, ...extra }] });
     return json(200, { query: { pages: [
       page(9000 + n, 3, lic('CC BY-SA 4.0')),
@@ -1072,6 +1072,21 @@ test('images: cover and in-article photos from free libraries with credits, neve
   assert.equal(job.images.length, 0);
   assert.ok(!sim.calls.includes('images'));
   assert.equal((await aiSettingsWith({ imagesEnabled: true, researchProviders: ['gemini', 'openai', 'anthropic', 'tavily'], writerProviders: ['gemini', 'openai', 'anthropic', 'nous', 'groq', 'cerebras', 'mistral', 'openrouter', 'ollama'] })).status, 200);
+});
+
+test('Spin: a new cover photo from the photo libraries, never one already used', async () => {
+  const { photoQuery } = await import('../src/services/images/imageService.js');
+  assert.equal(photoQuery('Best Laptops for a Small Office in 2026'), 'Laptops Small Office');
+  assert.equal(photoQuery('Anything', 'home wifi security'), 'home wifi security');
+  const spin = (body) => request(app).post('/api/admin/media/spin').set(as('editor')).send(body);
+  const one = await spin({ title: 'Best laptops for a small office', turn: 0 }).expect(200);
+  const two = await spin({ title: 'Best laptops for a small office', turn: 1 }).expect(200);
+  assert.ok(one.body.photo.url && two.body.photo.url);
+  assert.notEqual(one.body.photo.url, two.body.photo.url, 'each spin brings a different photo');
+  assert.equal(one.body.photo.query, 'laptops small office');
+  const media = await request(app).get('/api/admin/media').set(as('editor')).expect(200);
+  assert.ok(media.body.items.some((m) => m.url === one.body.photo.url), 'kept in the media library');
+  await spin({ title: '' }).expect(400);
 });
 
 test('Autopilot schedule: four posts a day in India time', () => {

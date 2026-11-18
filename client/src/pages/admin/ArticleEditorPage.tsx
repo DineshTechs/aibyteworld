@@ -122,6 +122,10 @@ export default function ArticleEditorPage() {
   const navigate = useNavigate();
   const { user, isStaff } = useAuth();
   const { toast, confirm } = useUi();
+  // "Spin": fetch a new cover photo from the photo libraries.
+  const [spinning, setSpinning] = useState(false);
+  const [spinTurn, setSpinTurn] = useState(0);
+  const [spinNote, setSpinNote] = useState('');
 
   const [form, setForm] = useState<Form>(EMPTY);
   const [meta, setMeta] = useState<Meta>({ status: 'draft', origin: 'manual' });
@@ -562,16 +566,44 @@ export default function ArticleEditorPage() {
             ) : (
               <div className="flex aspect-video items-center justify-center rounded-lg border border-dashed border-stone-300 text-sm text-stone-400 dark:border-stone-700">No image selected</div>
             )}
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button type="button" className="btn btn-sm" onClick={() => setPickImage(true)}>
                 {form.imageUrl ? 'Replace' : 'Choose or upload'}
               </button>
+              {isStaff && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={spinning || !form.title.trim()}
+                  title={form.title.trim() ? 'Search the photo libraries for a different photo' : 'Add a title first'}
+                  onClick={async () => {
+                    setSpinning(true);
+                    try {
+                      const r = await api.post<{ photo: { url: string; alt: string; provider: string; query: string } }>('/admin/media/spin', {
+                        title: form.title,
+                        keyword: form.focusKeyword,
+                        turn: spinTurn,
+                      });
+                      update({ imageUrl: r.photo.url, imageAlt: r.photo.alt });
+                      setSpinTurn((t) => t + 1);
+                      setSpinNote(`From ${r.photo.provider}, searched for "${r.photo.query}". Check the alt text, then save to keep it.`);
+                    } catch (e) {
+                      toast(errorMessage(e), 'error');
+                    } finally {
+                      setSpinning(false);
+                    }
+                  }}
+                >
+                  {spinning ? 'Searching…' : form.imageUrl ? '↻ Spin' : '↻ Find a photo'}
+                </button>
+              )}
               {form.imageUrl && (
                 <button type="button" className="btn btn-sm" onClick={() => update({ imageUrl: '', imageAlt: '' })}>
                   Remove
                 </button>
               )}
             </div>
+            {spinNote && <p className="text-xs text-stone-500" role="status">{spinNote}</p>}
             <div>
               <label htmlFor="imageAlt" className="label">
                 Alt text
