@@ -65,7 +65,14 @@ const researchJobSchema = new mongoose.Schema(
       instructions: { type: String, default: '', maxlength: 4000 },
       // Set for a refresh: the published article this job writes an updated version of.
       refreshOf: { type: ObjectId, ref: 'Article' },
+      // An article about a website: its address, whether the topic was left to
+      // be named after the site, and whether it is sponsored (rel="sponsored" + disclosure).
+      siteUrl: { type: String, default: '', maxlength: 500 },
+      topicAuto: { type: Boolean, default: false },
+      sponsored: { type: Boolean, default: false },
     },
+    // The website read for such an article (pages, links, name; see websiteReader.js).
+    website: { type: Mixed },
     status: { type: String, enum: JOB_STATUSES, default: 'queued' },
     steps: { type: [stepSchema], default: () => PIPELINE_STEPS.map((s) => ({ ...s })) },
     provider: { type: String, default: 'gemini' },

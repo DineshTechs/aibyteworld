@@ -23,8 +23,18 @@ const ARTICLE_OPTIONS = {
   transformTags: {
     a: (tagName, attribs) => {
       const out = { ...attribs };
-      if (out.target === '_blank') out.rel = 'noopener noreferrer';
-      else delete out.target;
+      // Link labels search engines need are kept: sponsored (paid or affiliate
+      // links), nofollow and ugc. Anything else in rel is dropped.
+      const labels = String(out.rel || '')
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((t) => ['sponsored', 'nofollow', 'ugc'].includes(t));
+      if (out.target === '_blank') out.rel = ['noopener', 'noreferrer', ...labels].join(' ');
+      else {
+        delete out.target;
+        if (labels.length) out.rel = labels.join(' ');
+        else delete out.rel;
+      }
       return { tagName, attribs: out };
     },
     img: (tagName, attribs) => ({ tagName, attribs: { ...attribs, loading: 'lazy' } }),

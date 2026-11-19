@@ -14,6 +14,7 @@ import { providerChain } from './providerService.js';
 import { runWithFailover } from './routing.js';
 import { applyFactFixes, factFixSchema, findUncited } from './factFix.js';
 import { extractionPrompt, extractionSchema, verifyExtraction } from './searchResearch.js';
+import { controlLinks, readWebsite, websiteNotes } from './websiteReader.js';
 import { addImages } from '../images/imageService.js';
 import { linkNewContent } from '../seo/internalLinks.js';
 import { publicBase } from '../growth/common.js';
@@ -243,7 +244,16 @@ export async function runPipeline(jobId) {
 
   const steps = {
     async analysis(step) {
-      const p = analysisPrompt(job.input, { today: ctx.today, maxQuestions: settings.maxResearchQuestions });
+      // An article about a website: read the site first (once).
+      if (job.input.siteUrl && !job.website?.pages?.length) {
+        step.message = `Reading ${job.input.siteUrl}`;
+        await job.save();
+        job.website = await readWebsite(job.input.siteUrl);
+        job.markModified('website');
+        if (job.input.topicAuto) job.input.topic = `${job.website.name}: what it offers and who it is for`.slice(0, 300);
+        await job.save();
+      }
+      const p = analysisPrompt(job.input, { today: ctx.today, maxQuestions: settings.maxResearchQuestions, website: job.website });
       const r = await gen(step, { ...p, json: true, temperature: 0.3, maxOutputTokens: 8192 }, analysisSchema);
       r.json.researchQuestions = r.json.researchQuestions.slice(0, settings.maxResearchQuestions);
       if (job.input.primaryKeyword) r.json.primaryKeyword = job.input.primaryKeyword;
@@ -255,6 +265,79 @@ export async function runPipeline(jobId) {
     async research(step) {
       const questions = job.analysis.researchQuestions;
       let sourceCount = await ResearchSource.countDocuments({ job: job._id });
+      // Stores grounded facts as findings, each tied to its source pages.
+      const storeGrounding = async (g, question) => {
+        // Map each grounding chunk to a stored source (up to maxSources per job).
+        const resolved = await mapLimit(g.chunks, 4, (c) => resolveGroundingUrl(c.uri));
+        const chunkSource = new Array(g.chunks.length).fill(null);
+        for (let ci = 0; ci < g.chunks.length; ci += 1) {
+          const url = resolved[ci];
+          if (!/^https?:\/\//i.test(url)) continue;
+          // eslint-disable-next-line no-await-in-loop
+          let src = await ResearchSource.findOne({ job: job._id, url });
+          if (!src) {
+            if (sourceCount >= settings.maxSources) continue;
+            // eslint-disable-next-line no-await-in-loop
+            const info = await inspectSource(url);
+            // eslint-disable-next-line no-await-in-loop
+            src = await ResearchSource.create({
+              job: job._id,
+              url,
+              domain: domainOf(url) || plainText(g.chunks[ci].title),
+              title: plainText(info.title || g.chunks[ci].title).slice(0, 300),
+              publishedAt: info.publishedAt || undefined,
+              publishedAtSource: info.publishedAt ? 'page' : 'unknown',
+              httpStatus: info.httpStatus,
+              reachable: info.reachable,
+            });
+            sourceCount += 1;
+          }
+          chunkSource[ci] = src;
+        }
+        const seen = new Set(job.findings.map((f) => f.text));
+        for (const sup of g.supports) {
+          const text = plainText(sup.text).slice(0, 2000);
+          const srcs = [...new Set(sup.chunkIndices.map((i) => chunkSource[i]).filter(Boolean))];
+          if (text.length < 20 || !srcs.length || seen.has(text)) continue;
+          seen.add(text);
+          job.findings.push({
+            fid: `F${job.findings.length + 1}`,
+            text,
+            question,
+            sources: srcs.map((s) => s._id),
+            domains: [...new Set(srcs.map((s) => s.domain))],
+            confidence: sup.confidence ?? undefined,
+          });
+        }
+      };
+
+      // An article about a website: facts from its own pages first, each with a
+      // word-for-word quote checked against the page text.
+      if (job.website?.pages?.length && !job.website.factsDone) {
+        const name = job.website.name;
+        const pages = job.website.pages.map((x) => ({ title: x.title || name, url: x.url, content: x.text }));
+        const siteQuestions = [
+          `What does ${name} offer: its products, services and main features?`,
+          `What do ${name}'s plans or prices cost, and what does each include?`,
+          `Who is ${name} for, how does it work, and who runs it?`,
+        ];
+        for (const q of siteQuestions) {
+          if (await isCancelled()) throw new JobCancelled();
+          step.message = `Reading ${job.website.domain}: ${q}`;
+          await job.save();
+          try {
+            const ext = await gen(step, { ...extractionPrompt(q, pages, { today: ctx.today, topic: job.input.topic }), json: true, temperature: 0.1, maxOutputTokens: 4096 }, extractionSchema, 'writer');
+            const { grounding } = verifyExtraction(pages, ext.json);
+            if (grounding.supports.length) await storeGrounding(grounding, q);
+          } catch (err) {
+            if (!(err instanceof AiError)) throw err;
+            job.warnings.push(`Reading ${job.website.domain} for "${q}" failed: ${err.message.slice(0, 160)}`);
+          }
+        }
+        job.website.factsDone = true;
+        job.markModified('website');
+        await job.save();
+      }
       for (let qi = 0; qi < questions.length; qi += 1) {
         if (job.research[qi]?.answer || job.research[qi]?.error) continue; // done before a restart
         if (await isCancelled()) throw new JobCancelled();
@@ -272,48 +355,7 @@ export async function runPipeline(jobId) {
           } else {
             entry.queries = g.queries;
             entry.suggestionsHtml = g.suggestionsHtml;
-            // Map each grounding chunk to a stored source (up to maxSources per job).
-            const resolved = await mapLimit(g.chunks, 4, (c) => resolveGroundingUrl(c.uri));
-            const chunkSource = new Array(g.chunks.length).fill(null);
-            for (let ci = 0; ci < g.chunks.length; ci += 1) {
-              const url = resolved[ci];
-              if (!/^https?:\/\//i.test(url)) continue;
-              // eslint-disable-next-line no-await-in-loop
-              let src = await ResearchSource.findOne({ job: job._id, url });
-              if (!src) {
-                if (sourceCount >= settings.maxSources) continue;
-                // eslint-disable-next-line no-await-in-loop
-                const info = await inspectSource(url);
-                // eslint-disable-next-line no-await-in-loop
-                src = await ResearchSource.create({
-                  job: job._id,
-                  url,
-                  domain: domainOf(url) || plainText(g.chunks[ci].title),
-                  title: plainText(info.title || g.chunks[ci].title).slice(0, 300),
-                  publishedAt: info.publishedAt || undefined,
-                  publishedAtSource: info.publishedAt ? 'page' : 'unknown',
-                  httpStatus: info.httpStatus,
-                  reachable: info.reachable,
-                });
-                sourceCount += 1;
-              }
-              chunkSource[ci] = src;
-            }
-            const seen = new Set(job.findings.map((f) => f.text));
-            for (const sup of g.supports) {
-              const text = plainText(sup.text).slice(0, 2000);
-              const srcs = [...new Set(sup.chunkIndices.map((i) => chunkSource[i]).filter(Boolean))];
-              if (text.length < 20 || !srcs.length || seen.has(text)) continue;
-              seen.add(text);
-              job.findings.push({
-                fid: `F${job.findings.length + 1}`,
-                text,
-                question: questions[qi],
-                sources: srcs.map((s) => s._id),
-                domains: [...new Set(srcs.map((s) => s.domain))],
-                confidence: sup.confidence ?? undefined,
-              });
-            }
+            await storeGrounding(g, questions[qi]);
           }
         } catch (err) {
           // Problems that affect every question stop the job at once.
@@ -381,7 +423,7 @@ export async function runPipeline(jobId) {
     },
 
     async writing(step) {
-      const r = await gen(step, { ...writingPrompt(job.input, job.analysis, job.plan, job.findings, ctx), temperature: 0.8, maxOutputTokens: 32768, timeoutMs: 300000 });
+      const r = await gen(step, { ...writingPrompt(job.input, job.analysis, job.plan, job.findings, { ...ctx, website: job.website }), temperature: 0.8, maxOutputTokens: 32768, timeoutMs: 300000 });
       job.draftRaw = stripFences(r.text);
       job.draftEdited = '';
       job.draftHtml = '';
@@ -584,11 +626,24 @@ export async function runPipeline(jobId) {
 
   // Applies citations to the final draft and records quality measures.
   async function finalizeDraft(draftHtml) {
+    // Only real links: this blog's pages and the pages read on the website the
+    // article is about. Made-up or other outside links are removed (text kept).
+    const linked = controlLinks(draftHtml, job.website, { sponsored: job.input.sponsored });
     // Swap stock "AI" phrases for plain wording before citations are applied.
-    const polished = polishWording(draftHtml, job.input.language);
+    const polished = polishWording(linked.html, job.input.language);
     const sourceHtml = polished.html;
     const sources = new Map((await ResearchSource.find({ job: job._id }).lean()).map((x) => [String(x._id), x]));
-    const { html, usedFindings, usedSourceIds, warnings } = applyCitations(sourceHtml, job.findings, sources);
+    const cited = applyCitations(sourceHtml, job.findings, sources);
+    const { usedFindings, usedSourceIds, warnings } = cited;
+    let { html } = cited;
+    // An article about a website: a dated note before the Sources list (and a
+    // disclosure at the top of sponsored posts). Added after the citation check,
+    // which would otherwise flag the date as an unsourced figure.
+    if (job.website?.url) {
+      const notes = websiteNotes(job.website, { sponsored: job.input.sponsored });
+      const at = html.lastIndexOf('<h2>Sources</h2>');
+      html = `${notes.top}${at >= 0 ? `${html.slice(0, at)}${notes.bottom}${html.slice(at)}` : `${html}${notes.bottom}`}`;
+    }
     job.findings.forEach((f) => {
       f.used = usedFindings.has(f.fid);
     });
@@ -608,7 +663,9 @@ export async function runPipeline(jobId) {
       uncitedFigureParagraphs: uncited,
     };
     job.markModified('quality');
-    const keep = job.warnings.filter((w) => w.startsWith('Switched') || w.startsWith('Skipped') || w.startsWith('The humanise pass') || w.startsWith('The writing model reached'));
+    if (linked.removed) warnings.push(`${linked.removed} link${linked.removed === 1 ? '' : 's'} to outside pages that were not part of the research ${linked.removed === 1 ? 'was' : 'were'} removed (the text is kept).`);
+    if (job.website?.url && !linked.kept) warnings.push(`The article has no links to ${job.website.domain} apart from the note at the end. Add some in the editor if you want them.`);
+    const keep = job.warnings.filter((w) => w.startsWith('Switched') || w.startsWith('Skipped') || w.startsWith('The humanise pass') || w.startsWith('The writing model reached') || w.startsWith('Reading ') || w.startsWith('No screenshot') || w.startsWith('No site image'));
     job.warnings = [...keep, ...warnings];
   }
 

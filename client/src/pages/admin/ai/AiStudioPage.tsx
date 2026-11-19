@@ -19,7 +19,7 @@ export default function AiStudioPage() {
   const categories = useFetch(() => api.get<{ items: Category[] }>('/admin/categories'), []);
   const recent = useFetch(() => api.get<Paged<ResearchJob>>('/admin/ai/jobs?limit=5'), []);
   const [busy, setBusy] = useState(false);
-  const [f, setF] = useState({ topic: '', primaryKeyword: '', secondaryKeywords: '', country: '', language: '', audience: '', length: 1500, style: '', category: '', instructions: '' });
+  const [f, setF] = useState({ topic: '', siteUrl: '', sponsored: false, primaryKeyword: '', secondaryKeywords: '', country: '', language: '', audience: '', length: 1500, style: '', category: '', instructions: '' });
 
   useEffect(() => {
     const s = settings.data?.settings;
@@ -34,6 +34,8 @@ export default function AiStudioPage() {
     try {
       const r = await api.post<{ item: ResearchJob }>('/admin/ai/jobs', {
         topic: f.topic,
+        siteUrl: f.siteUrl.trim() && !/^https?:\/\//i.test(f.siteUrl.trim()) ? `https://${f.siteUrl.trim()}` : f.siteUrl.trim(),
+        sponsored: Boolean(f.siteUrl.trim()) && f.sponsored,
         primaryKeyword: f.primaryKeyword,
         secondaryKeywords: f.secondaryKeywords.split(',').map((k) => k.trim()).filter(Boolean),
         country: f.country,
@@ -75,10 +77,36 @@ export default function AiStudioPage() {
       <div className="grid gap-6 xl:grid-cols-[1fr_22rem]">
         <form onSubmit={submit} className="card space-y-4 p-5">
           <div>
-            <label htmlFor="s-topic" className="label">
-              Topic
+            <label htmlFor="s-site" className="label">
+              Write about a website (optional)
             </label>
-            <input id="s-topic" required minLength={5} maxLength={300} className="input" value={f.topic} onChange={(e) => set({ topic: e.target.value })} placeholder="Best AI tools for small businesses in 2026" />
+            <input id="s-site" type="text" inputMode="url" maxLength={500} className="input" value={f.siteUrl} onChange={(e) => set({ siteUrl: e.target.value })} placeholder="https://example.com" />
+            <p className="mt-1 text-xs text-stone-500">
+              The site's home page and pages about what it offers (pricing, features, products…) are read and used as sources. The article links to those pages, the cover is a screenshot of the site, and a note says when the site was read.
+            </p>
+            {f.siteUrl.trim() && (
+              <label className="mt-2 flex items-start gap-2 text-sm">
+                <input type="checkbox" className="mt-1" checked={f.sponsored} onChange={(e) => set({ sponsored: e.target.checked })} />
+                <span>
+                  Sponsored or affiliate post: adds a disclosure at the top and marks the links <code>rel="sponsored"</code>, as Google requires for paid links.
+                </span>
+              </label>
+            )}
+          </div>
+          <div>
+            <label htmlFor="s-topic" className="label">
+              Topic{f.siteUrl.trim() ? ' (optional)' : ''}
+            </label>
+            <input
+              id="s-topic"
+              required={!f.siteUrl.trim()}
+              minLength={f.siteUrl.trim() ? 0 : 5}
+              maxLength={300}
+              className="input"
+              value={f.topic}
+              onChange={(e) => set({ topic: e.target.value })}
+              placeholder={f.siteUrl.trim() ? 'Leave empty to write an overview of the website' : 'Best AI tools for small businesses in 2026'}
+            />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
@@ -149,7 +177,7 @@ export default function AiStudioPage() {
             <textarea id="s-instr" rows={3} maxLength={3000} className="input" value={f.instructions} onChange={(e) => set({ instructions: e.target.value })} placeholder="Anything the article must cover or avoid (optional)" />
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <button type="submit" className="btn btn-primary" disabled={busy || !status.data.ready || f.topic.trim().length < 5}>
+            <button type="submit" className="btn btn-primary" disabled={busy || !status.data.ready || (f.topic.trim().length < 5 && !f.siteUrl.trim())}>
               {busy ? 'Starting…' : 'Research and write'}
             </button>
             <span className="text-xs text-stone-500">Usually takes 1–4 minutes. You can leave this page; the job keeps running.</span>

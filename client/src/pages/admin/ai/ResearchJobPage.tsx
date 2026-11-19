@@ -169,6 +169,31 @@ export default function ResearchJobPage() {
 
           <section className="card space-y-2 p-5 text-sm">
             <h2 className="font-sans text-base font-semibold">Brief</h2>
+            {job.input.siteUrl && (
+              <div>
+                <p>
+                  About the website:{' '}
+                  <a href={job.input.siteUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-brand-700 hover:underline dark:text-brand-300">
+                    {job.input.siteUrl}
+                  </a>
+                  {job.input.sponsored ? ' · sponsored' : ''}
+                </p>
+                {job.website?.pages?.length ? (
+                  <details className="mt-1 text-xs text-stone-500">
+                    <summary className="cursor-pointer">{job.website.pages.length} page{job.website.pages.length === 1 ? '' : 's'} read</summary>
+                    <ul className="mt-1 space-y-0.5">
+                      {job.website.pages.map((pg) => (
+                        <li key={pg.url} className="truncate">
+                          <a href={pg.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                            {pg.title || pg.url}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+              </div>
+            )}
             {job.input.primaryKeyword && <p>Primary keyword: {job.input.primaryKeyword}</p>}
             {job.input.secondaryKeywords.length > 0 && <p>Secondary: {job.input.secondaryKeywords.join(', ')}</p>}
             <p>

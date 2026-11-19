@@ -33,8 +33,54 @@ async function downloadImage(url, { userAgent } = {}) {
   return { buffer: res.body, mimeType, ...imageSize(res.body) };
 }
 
+// A screenshot of a web page from Microlink's free screenshot service (no key;
+// about 50 a day). Returns the address of the finished image.
+async function screenshotUrl(pageUrl) {
+  const api = `https://api.microlink.io/?url=${encodeURIComponent(pageUrl)}&screenshot=true&meta=false&viewport.width=1280&viewport.height=800&waitForTimeout=1500`;
+  const res = await safeFetch(api, { timeoutMs: 45000, maxBytes: 300_000 });
+  let data;
+  try {
+    data = JSON.parse(res.body);
+  } catch {
+    throw new AiError('The screenshot service gave an unreadable answer.', { code: 'download' });
+  }
+  const url = data?.data?.screenshot?.url;
+  if (data?.status !== 'success' || !/^https:\/\//.test(url || '')) throw new AiError(`The screenshot service could not take a screenshot${data?.message ? `: ${String(data.message).slice(0, 120)}` : ''}.`, { code: 'download' });
+  return url;
+}
+
 // Replaceable in tests (no network there).
-export const _deps = { download: downloadImage };
+export const _deps = { download: downloadImage, screenshot: screenshotUrl };
+
+/**
+ * Cover for an article about a website: a screenshot of its home page, else
+ * the sharing image the site publishes (og:image). Returns null if neither
+ * works, so the normal photo search is used. Notes go to `notes`.
+ */
+export async function websiteCover(site, { uploadedBy, notes = [] }) {
+  const link = `<a href="${esc(site.origin)}" target="_blank" rel="noopener">${esc(site.domain)}</a>`;
+  const day = new Date().toISOString().slice(0, 10);
+  const tries = [
+    { kind: 'screenshot', get: () => _deps.screenshot(site.url), alt: `The ${site.name} website (${site.domain})`, credit: `Screenshot of ${link}`, minWidth: 800 },
+    ...(site.image ? [{ kind: 'site image', get: async () => site.image, alt: `${site.name} (${site.domain})`, credit: `Image from ${link}`, minWidth: 600 }] : []),
+  ];
+  for (const t of tries) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const img = await _deps.download(await t.get());
+      if (img.width && img.width < t.minWidth) throw new AiError(`it is only ${img.width} px wide`, { code: 'download' });
+      const alt = clipAlt(t.alt);
+      // eslint-disable-next-line no-await-in-loop
+      const media = await saveLocal(img, { originalName: `${site.domain}-${t.kind.replace(/\s/g, '-')}${EXT[img.mimeType] || '.jpg'}`, alt, sourceId: `${t.kind}:${site.domain}:${day}:${crypto.randomBytes(3).toString('hex')}`, credit: { text: plainText(t.credit), html: t.credit }, provider: t.kind === 'screenshot' ? 'Website screenshot (Microlink)' : `${site.domain} sharing image`, uploadedBy });
+      const variants = media.variants?.length ? media.variants.map(({ width, url }) => ({ width, url })) : undefined;
+      return { role: 'cover', heading: site.name, url: media.url, alt, width: img.width, height: img.height, credit: t.credit, provider: media.provider, media: media._id, ...(variants ? { variants } : {}) };
+    } catch (err) {
+      // A missing screenshot never fails the article.
+      notes.push(`No ${t.kind} of ${site.domain}: ${err.message.slice(0, 160)}`);
+    }
+  }
+  return null;
+}
 
 async function saveLocal(img, meta) {
   const filename = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${EXT[img.mimeType] || '.jpg'}`;
@@ -271,6 +317,19 @@ export async function addImages({ job, step, settings, chain, appName, contact, 
     step.message = 'Images are turned off in AI Providers';
     return;
   }
+  // An article about a website: its screenshot (or its own sharing image) is the cover.
+  let siteCover = null;
+  if (job.website?.url) {
+    const notes = [];
+    siteCover = await websiteCover(job.website, { uploadedBy: job.createdBy, notes });
+    if (notes.length) job.warnings.push(`${notes.join('. ')}.${siteCover ? '' : ' A stock photo is used as the cover instead.'}`);
+  }
+  if (!chain.chain.length && siteCover) {
+    job.images = [siteCover];
+    job.markModified('images');
+    step.message = `Cover: ${siteCover.provider} · no photo library for in-article photos`;
+    return;
+  }
   if (!chain.chain.length) {
     job.warnings.push(`No images were added: no photo library is set up (${chain.skipped.slice(0, 3).join('; ') || 'add a free Unsplash, Pexels or Pixabay key in AI Providers'}).`);
     step.message = 'No photo library is set up';
@@ -298,12 +357,12 @@ export async function addImages({ job, step, settings, chain, appName, contact, 
     alt: b?.alt || heading,
   });
   const wanted = [
-    { role: 'cover', heading: title, ...fill(briefs.cover, title) },
+    ...(siteCover ? [] : [{ role: 'cover', heading: title, ...fill(briefs.cover, title) }]),
     ...sections.map((x, k) => ({ role: 'inline', heading: x.heading, index: x.i, ...fill(briefs.sections[k], x.heading) })),
   ];
 
   const ctx = { used: new Set(), appName, contact, uploadedBy: job.createdBy };
-  const added = [];
+  const added = siteCover ? [siteCover] : [];
   const failed = {};
   const fetchOne = async (brief) => {
     const { result } = await runWithFailover(chain.chain, 'image', (p) => fromProvider(p, brief, ctx), { onSwitch, onSkip });

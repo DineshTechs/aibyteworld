@@ -117,7 +117,12 @@ function stepAnswer(system, prompt) {
     if (sim.editMode === 'dropMarkers') return ['editing', draft.replace(/\[F\d+\]/g, '')];
     return ['editing', draft.replace('Intro paragraph.', "Here's the short version.")];
   }
-  if (system.includes('experienced writer')) return ['writing', sim.cleanArticle ? CLEAN_ARTICLE : ARTICLE];
+  if (system.includes('experienced writer')) {
+    const a = sim.cleanArticle ? CLEAN_ARTICLE : ARTICLE;
+    // Website articles: one real page of the site and one made-up address.
+    if (sim.siteLinks) return ['writing', a.replace('Intro paragraph.', 'Intro paragraph. See <a href="https://acme-tools.example/pricing/">the Acme pricing page</a> and <a href="https://made-up.example/page">this page</a>.')];
+    return ['writing', a];
+  }
   if (system.includes('SEO editor')) {
     return ['seo', JSON.stringify({
       seoTitle: 'AI tools for small businesses: what actually helps',
@@ -1091,6 +1096,75 @@ test('images: cover and in-article photos from free libraries with credits, neve
   assert.equal((await aiSettingsWith({ imagesEnabled: true, researchProviders: ['gemini', 'openai', 'anthropic', 'tavily'], writerProviders: ['gemini', 'openai', 'anthropic', 'nous', 'groq', 'cerebras', 'mistral', 'openrouter', 'ollama'] })).status, 200);
 });
 
+test('website article: the site is read, its pages are sources, links are checked, the cover is a screenshot', async () => {
+  const { _siteDeps } = await import('../src/services/ai/websiteReader.js');
+  const page = (title, body, extra = '') => ({ status: 200, contentType: 'text/html; charset=utf-8', body: `<html><head><title>${title}</title>${extra}</head><body><main>${body}</main></body></html>` });
+  const site = {
+    'https://acme-tools.example/robots.txt': { status: 404, contentType: 'text/plain', body: '' },
+    'https://acme-tools.example/': page(
+      'Acme Tools | Invoicing for small teams',
+      '<h1>Invoices in seconds</h1><p>Acme Tools helps small teams send invoices. A recent survey found that about 42 percent of small businesses used AI tools last year, and Acme adds AI reminders to every plan.</p><nav><a href="/pricing">Pricing</a><a href="/features">Features</a><a href="/login">Log in</a></nav>',
+      '<meta property="og:site_name" content="Acme Tools"><meta name="description" content="Invoicing for small teams.">',
+    ),
+    'https://acme-tools.example/pricing': page('Pricing – Acme Tools', '<h1>Plans</h1><p>“Team plans cost $30 per month” and include unlimited invoices, reminders and bank sync for every member of the team. You can change or cancel your plan at any time from the account page.</p>'),
+    'https://acme-tools.example/features': page('Features – Acme Tools', '<h1>Features</h1><p>Recurring invoices, payment reminders, multi-currency support and a mobile app are part of every Acme Tools plan for small teams, with exports to the most popular accounting software.</p>'),
+  };
+  const fetched = [];
+  const realFetch = _siteDeps.fetch;
+  _siteDeps.fetch = async (u) => {
+    fetched.push(u);
+    if (!site[u]) throw new Error(`no such page ${u}`);
+    return { ...site[u], url: u };
+  };
+  const shots = [];
+  const realShot = imageService._deps.screenshot;
+  imageService._deps.screenshot = async (u) => {
+    shots.push(u);
+    return 'https://shots.example/acme.png';
+  };
+  const realDownload = imageService._deps.download;
+  imageService._deps.download = async () => ({ buffer: fakePng(1280, 800), mimeType: 'image/png', width: 1280, height: 800 });
+  sim.siteLinks = true;
+  try {
+    await request(app).post('/api/admin/ai/jobs').set(as('editor')).send({ siteUrl: 'not a website' }).expect(400);
+    await request(app).post('/api/admin/ai/jobs').set(as('editor')).send({ topic: '' }).expect(400);
+    const created = await request(app).post('/api/admin/ai/jobs').set(as('editor')).send({ siteUrl: 'https://acme-tools.example/', sponsored: true, length: 300 }).expect(201);
+    assert.equal(created.body.item.input.topicAuto, true);
+    await runQueued();
+    const job = await ResearchJob.findById(created.body.item._id);
+    assert.equal(job.status, 'completed', job.error);
+    assert.equal(job.input.topic, 'Acme Tools: what it offers and who it is for');
+    assert.deepEqual(job.website.pages.map((x) => x.url), ['https://acme-tools.example/', 'https://acme-tools.example/pricing', 'https://acme-tools.example/features']);
+    assert.ok(!fetched.includes('https://acme-tools.example/login'), 'log-in pages are not read');
+    assert.ok(job.findings.some((f) => f.domains.includes('acme-tools.example')), 'facts from the site, with quotes checked against its pages');
+
+    const article = await Article.findById(job.article);
+    assert.match(article.content, /^<p><em>Disclosure: this is a sponsored article about Acme Tools/);
+    assert.match(article.content, /<a href="https:\/\/acme-tools\.example\/pricing" target="_blank" rel="noopener noreferrer sponsored">the Acme pricing page<\/a>/);
+    assert.doesNotMatch(article.content, /made-up\.example/, 'made-up links are removed');
+    assert.match(article.content, /this page\./, 'their text is kept');
+    assert.match(article.content, /This overview is based on information published on <a href="https:\/\/acme-tools\.example\/"[^>]*>acme-tools\.example<\/a> as of \d{4}-\d{2}-\d{2}[\s\S]*<h2>Sources<\/h2>/);
+    assert.ok(job.warnings.some((w) => /^1 link to outside pages/.test(w)), job.warnings.join(' | '));
+    assert.deepEqual(shots, ['https://acme-tools.example/']);
+    assert.match(article.featuredImage.credit, /^Screenshot of <a href="https:\/\/acme-tools\.example"/);
+    assert.equal(article.featuredImage.alt, 'The Acme Tools website (acme-tools.example)');
+
+    // A site that shows no text without a browser fails with a clear reason.
+    site['https://blank.example/robots.txt'] = { status: 404, contentType: 'text/plain', body: '' };
+    site['https://blank.example/'] = page('App', '<div id="root"></div>');
+    const blank = await request(app).post('/api/admin/ai/jobs').set(as('editor')).send({ siteUrl: 'https://blank.example/' }).expect(201);
+    await runQueued();
+    const failed = await ResearchJob.findById(blank.body.item._id);
+    assert.equal(failed.status, 'failed');
+    assert.match(failed.error, /almost no text without a browser/);
+  } finally {
+    sim.siteLinks = false;
+    _siteDeps.fetch = realFetch;
+    imageService._deps.screenshot = realShot;
+    imageService._deps.download = realDownload;
+  }
+});
+
 test('Spin: a new cover photo from the photo libraries, never one already used', async () => {
   const { photoQuery } = await import('../src/services/images/imageService.js');
   assert.equal(photoQuery('Best Laptops for a Small Office in 2026'), 'Laptops Small Office');
@@ -1416,6 +1490,19 @@ test('Telegram: link a chat, notifications with Publish/Reject buttons, only the
 
   // Commands.
   const say = (id, text) => bot.handleUpdate({ update_id: id, message: { chat: me, from: { id: 111 }, text } });
+  // /site (or just a website address) starts an article about that website.
+  sim.telegram = [];
+  await say(60, '/site acme-tools.example sponsored focus on the pricing plans');
+  await say(61, 'https://acme-tools.example/features');
+  await say(62, '/site not-a-site');
+  const siteJobs = await ResearchJob.find({ 'input.siteUrl': { $in: ['https://acme-tools.example/', 'https://acme-tools.example/features'] }, status: 'queued' }).sort({ createdAt: 1 });
+  assert.equal(siteJobs.length, 2);
+  assert.equal(siteJobs[0].input.sponsored, true);
+  assert.equal(siteJobs[0].input.instructions, 'focus on the pricing plans');
+  assert.equal(siteJobs[1].input.sponsored, false);
+  assert.equal(sim.telegram.filter((m) => /Reading <b>acme-tools\.example<\/b>/.test(m.text || '')).length, 2);
+  assert.ok(sim.telegram.some((m) => /is not a website address/.test(m.text || '')));
+  await ResearchJob.deleteMany({ _id: { $in: siteJobs.map((j) => j._id) } }); // not for the job runner (no network here)
   sim.telegram = [];
   await say(9, '/pending');
   const pendingNow = await Article.countDocuments({ status: 'pending_approval' });

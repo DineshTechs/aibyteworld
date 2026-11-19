@@ -369,10 +369,13 @@ export interface ResearchJob {
     style: string;
     category?: { _id: string; name: string; slug: string } | null;
     instructions: string;
+    siteUrl?: string;
+    sponsored?: boolean;
   };
   status: JobStatus;
   steps: JobStep[];
   model: string;
+  website?: { name: string; url: string; domain: string; pages: { url: string; title: string }[] };
   analysis?: {
     searchIntent: string;
     intentSummary: string;

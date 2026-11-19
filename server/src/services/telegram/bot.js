@@ -13,6 +13,7 @@ import { afterPublish } from '../publishHooks.js';
 import { applyRefresh, discardRefresh } from '../refresh/refreshService.js';
 import { SpinError, replaceArticleCover } from '../images/coverSpin.js';
 import { rotationOrder } from '../categories.js';
+import { JobStartError, startAiJob } from '../ai/jobService.js';
 
 // Telegram bot: sends notifications, lets linked admins approve or reject
 // posts with buttons, and answers a few commands. It polls Telegram for
@@ -241,6 +242,7 @@ const HELP = [
   '/status – Autopilot and AI providers',
   '/stats – visitors today and this week',
   '/run – start an Autopilot post now',
+  '/site &lt;address&gt; [notes] – write an article about a website (or just send the address). Add the word sponsored after the address for a sponsored post',
   '/autopilot_on, /autopilot_off – turn Autopilot on or off',
   '/unlink – stop messages to this chat',
 ].join('\n');
@@ -316,6 +318,35 @@ async function cmdRun(chat) {
     return sendToChats(`Started a post: <b>${esc(job.input.topic)}</b>\nYou'll get a message when it is published or needs approval.`, { only: chat.chatId });
   } catch (err) {
     return sendToChats(`Could not start a post: ${esc(err.message)}`, { only: chat.chatId });
+  }
+}
+
+// /site https://example.com [sponsored] [notes]: an AI article about a website.
+// The draft comes back here for approval like other AI articles.
+async function cmdSite(chat, args) {
+  const user = await User.findOne({ _id: chat.user, active: true });
+  if (!user || !['admin', 'editor'].includes(user.role)) return sendToChats('The blog account linked to this chat cannot start AI articles.', { only: chat.chatId });
+  let [address, ...rest] = args;
+  if (!address) return sendToChats('Send the website address after /site, for example:\n/site https://example.com\n/site https://example.com sponsored focus on the pricing plans', { only: chat.chatId });
+  if (!/^https?:\/\//i.test(address)) address = `https://${address}`;
+  let url;
+  try {
+    url = new URL(address);
+    if (!url.hostname.includes('.')) throw new Error('no domain');
+  } catch {
+    return sendToChats(`"${esc(address)}" is not a website address.`, { only: chat.chatId });
+  }
+  const sponsored = /^sponsored$/i.test(rest[0] || '');
+  if (sponsored) rest = rest.slice(1);
+  try {
+    const job = await startAiJob({ siteUrl: url.toString(), sponsored, instructions: rest.join(' ').slice(0, 3000) }, { user });
+    return sendToChats(
+      `🌐 Reading <b>${esc(url.hostname)}</b> and writing an article about it${sponsored ? ' (sponsored)' : ''}. It usually takes 5–10 minutes; the draft will come here for approval.\nJob: ${esc(String(job._id))}`,
+      { only: chat.chatId },
+    );
+  } catch (err) {
+    if (err instanceof JobStartError) return sendToChats(`Could not start: ${esc(err.message)}`, { only: chat.chatId });
+    throw err;
   }
 }
 
@@ -422,7 +453,15 @@ export async function handleUpdate(update) {
     await reply(chatId, 'This is a private bot for a blog. To use it, open the blog admin → Telegram and click "Link my Telegram".');
     return;
   }
+  // A website address on its own: write about that website.
+  if (/^https?:\/\/\S+$/i.test(msg.text.trim())) {
+    await cmdSite(chat, [msg.text.trim()]);
+    return;
+  }
   switch (cmd) {
+    case '/site':
+      await cmdSite(chat, args);
+      break;
     case '/pending':
       await cmdPending(chatId);
       break;

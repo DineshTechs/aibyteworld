@@ -6,6 +6,7 @@ import { AIProvider, Category, ResearchJob, ResearchSource, SiteSettings } from 
 import { logActivity } from '../services/activityService.js';
 import { clearHealth, healthView } from '../services/ai/health.js';
 import { fitsRole, getActiveProvider, providerChain } from '../services/ai/providerService.js';
+import { JobStartError, startAiJob } from '../services/ai/jobService.js';
 import { env } from '../config/env.js';
 import { encryptSecret } from '../utils/crypto.js';
 import { plainText } from '../utils/content.js';
@@ -233,53 +234,40 @@ export const updateAiSettings = asyncHandler(async (req, res) => {
 });
 
 // ---------- Jobs (admin, editor) ----------
-export const jobCreateSchema = z.object({
-  topic: z.string().trim().min(5, 'Describe the topic in a few words').max(300),
-  primaryKeyword: z.string().trim().max(120).default(''),
-  secondaryKeywords: z.array(z.string().trim().min(1).max(120)).max(15).default([]),
-  country: z.string().trim().max(80).default(''),
-  language: z.string().trim().min(1).max(60).default('English'),
-  audience: z.string().trim().max(300).default(''),
-  length: z.number().int().min(300).max(5000).default(1500),
-  style: z.string().trim().max(120).default(''),
-  category: objectId.nullable().optional(),
-  instructions: z.string().trim().max(3000).default(''),
-});
+export const jobCreateSchema = z
+  .object({
+    // Leave the topic empty to write about the website below.
+    topic: z.string().trim().max(300).default(''),
+    // An article about a website: it is read (home page and offering pages) and linked to.
+    siteUrl: z
+      .string()
+      .trim()
+      .max(500)
+      .refine((v) => v === '' || /^https?:\/\/[^\s/]+\.[^\s]+$/i.test(v), 'Enter the full website address, starting with https://')
+      .default(''),
+    sponsored: z.boolean().default(false),
+    primaryKeyword: z.string().trim().max(120).default(''),
+    secondaryKeywords: z.array(z.string().trim().min(1).max(120)).max(15).default([]),
+    country: z.string().trim().max(80).default(''),
+    language: z.string().trim().min(1).max(60).default('English'),
+    audience: z.string().trim().max(300).default(''),
+    length: z.number().int().min(300).max(5000).default(1500),
+    style: z.string().trim().max(120).default(''),
+    category: objectId.nullable().optional(),
+    instructions: z.string().trim().max(3000).default(''),
+  })
+  .refine((b) => b.siteUrl || b.topic.length >= 5, { message: 'Describe the topic in a few words, or enter a website to write about', path: ['topic'] });
 
-const JOB_LIST_FIELDS = 'input.topic input.primaryKeyword status steps.key steps.status error article createdBy createdAt finishedAt usage model autopilot';
+const JOB_LIST_FIELDS = 'input.topic input.primaryKeyword input.siteUrl status steps.key steps.status error article createdBy createdAt finishedAt usage model autopilot';
 
 export const createJob = asyncHandler(async (req, res) => {
-  const settings = (await SiteSettings.getSingleton()).ai;
-  const ready = await readiness();
-  if (!ready.ready) throw badRequest(`${ready.reason} Add an API key and model in AI Providers.`);
-
-  const since = new Date();
-  since.setHours(0, 0, 0, 0);
-  if ((await ResearchJob.countDocuments({ createdAt: { $gte: since } })) >= settings.dailyJobLimit) {
-    throw new HttpError(429, `The daily limit of ${settings.dailyJobLimit} AI articles has been reached. Change it in AI Providers or try tomorrow.`);
+  try {
+    const job = await startAiJob(req.body, req);
+    res.status(201).json({ item: job });
+  } catch (err) {
+    if (err instanceof JobStartError) throw new HttpError(err.status, err.message);
+    throw err;
   }
-  if (req.body.category && !(await Category.exists({ _id: req.body.category }))) throw badRequest('Selected category does not exist');
-
-  const b = req.body;
-  const job = await ResearchJob.create({
-    input: {
-      topic: plainText(b.topic),
-      primaryKeyword: plainText(b.primaryKeyword),
-      secondaryKeywords: b.secondaryKeywords.map(plainText).filter(Boolean),
-      country: plainText(b.country),
-      language: plainText(b.language) || 'English',
-      audience: plainText(b.audience),
-      length: b.length,
-      style: plainText(b.style),
-      category: b.category || undefined,
-      instructions: plainText(b.instructions),
-    },
-    provider: ready.writer[0].key,
-    model: ready.writer[0].model,
-    createdBy: req.user._id,
-  });
-  await logActivity(req, 'ai.job_create', { entityType: 'ResearchJob', entityId: job._id, summary: `Started AI article: ${job.input.topic}` });
-  res.status(201).json({ item: job });
 });
 
 export const listJobs = asyncHandler(async (req, res) => {
@@ -295,7 +283,7 @@ export const listJobs = asyncHandler(async (req, res) => {
 
 export const getJob = asyncHandler(async (req, res) => {
   const job = await ResearchJob.findById(req.params.id)
-    .select('-draftHtml -draftRaw -draftEdited')
+    .select('-draftHtml -draftRaw -draftEdited -website.pages.text')
     .populate('createdBy', 'name')
     .populate('article', 'title slug status')
     .populate('input.category', 'name slug')
