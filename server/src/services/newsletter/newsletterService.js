@@ -5,6 +5,7 @@ import { EMAIL_PROVIDERS, sendEmail } from '../../integrations/email.js';
 import { Article, Growth, NewsletterSubscriber, SiteSettings } from '../../models/index.js';
 import { badRequest } from '../../utils/http.js';
 import { absolute, growthWithSecrets, publicBase, secretOf } from '../growth/common.js';
+import { alertSystem } from '../telegram/alert.js';
 
 // Newsletter: double opt-in confirmation emails, a weekly digest of the best
 // new posts, and one-click unsubscribe links in every email.
@@ -162,6 +163,7 @@ export async function sendDigest({ kind = 'weekly', days = 7 } = {}) {
     if (!env.isTest) await sleep(EMAIL_PROVIDERS[cfg.provider]?.delayMs || 200);
   }
   await record({ kind, subject, posts: posts.length, sent, failed, note: lastError.slice(0, 200) });
+  if (failed) await alertSystem('newsletter', `The newsletter could not be sent to ${failed} of ${subs.length} subscriber${subs.length === 1 ? '' : 's'}: ${lastError}`, { icon: '⚠️' });
   await Growth.updateOne({ key: 'growth' }, { $set: { 'newsletter.lastError': lastError.slice(0, 300), ...(sent ? { 'newsletter.lastOkAt': new Date() } : {}) } });
   return { sent, failed, posts: posts.length, error: lastError };
 }

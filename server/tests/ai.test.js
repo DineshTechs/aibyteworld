@@ -1429,6 +1429,7 @@ test('Telegram: link a chat, notifications with Publish/Reject buttons, only the
   let job = await ResearchJob.findById(created.body.item._id);
   const msg = sent(/ready for review/)[0];
   assert.ok(msg, JSON.stringify(sim.telegram.map((m) => m.text)));
+  assert.match(sent(/Writing started/)[0]?.text || '', /AI Content Studio · started by/, 'the start is announced too');
   assert.equal(msg.chat_id, '111');
   const buttons = msg.reply_markup.inline_keyboard[0].map((b) => b.callback_data);
   assert.deepEqual(buttons, [`a:${job.article}`, `r:${job.article}`]);
@@ -1553,6 +1554,32 @@ test('Telegram: link a chat, notifications with Publish/Reject buttons, only the
   created = await request(app).post('/api/admin/ai/jobs').set(as('editor')).send(jobBody).expect(201);
   await runQueued();
   assert.equal(sent(/ready for review/).length, 0);
+
+  // Writing started / resumed, problems while writing, and site errors (each kind at most once an hour).
+  sim.telegram = [];
+  await bot.notifyStarted({ input: { topic: 'Best <AI> tools' }, autopilot: { enabled: true, kind: 'trending' } }, { categoryName: 'AI News' });
+  assert.match(sent(/Writing started/)[0].text, /<b>Best &lt;AI&gt; tools<\/b>\nAutopilot · trending story · AI News/);
+  await bot.notifyStarted({ input: { topic: 'x', siteUrl: 'https://acme-tools.example/' } }, { resumed: true, byName: 'Asha' });
+  assert.match(sent(/Writing resumed/)[0].text, /About the website https:\/\/acme-tools\.example\/ · started by Asha/);
+  assert.deepEqual(
+    bot.problemsOf({ switches: [{ step: 'writing', from: 'Gemini', to: 'Groq', reason: 'quota' }], warnings: ['No cover photo was added: none found.', 'The article is 300 words, well short of 1500.'] }),
+    ['writing: switched from Gemini to Groq (quota)', 'No cover photo was added: none found.'],
+  );
+  await bot.notifyProblems({ input: { topic: 't' }, switches: [], warnings: ['Plain warning'] }, 'Title');
+  assert.equal(sent(/Problems while writing/).length, 0, 'nothing to report');
+  await bot.notifyProblems({ input: { topic: 't' }, switches: [{ step: 'research', from: 'Gemini', to: 'Tavily', reason: 'quota' }], warnings: [] }, 'My post');
+  assert.match(sent(/Problems while writing/)[0].text, /"My post"[\s\S]*• research: switched from Gemini to Tavily \(quota\)/);
+  bot._resetSystemThrottle();
+  await bot.notifySystem('publish', 'Scheduled publishing failed: boom');
+  await bot.notifySystem('publish', 'Scheduled publishing failed: boom again');
+  await bot.notifySystem('digest', 'Newsletter digest failed: x');
+  assert.equal(sent(/Scheduled publishing failed/).length, 1, 'the same kind at most once an hour');
+  assert.equal(sent(/Newsletter digest failed/).length, 1, 'other kinds are separate');
+  const tgView = await request(app).put('/api/admin/telegram').set(as('admin')).send({ notify: { started: false } }).expect(200);
+  assert.equal(tgView.body.notify.started, false);
+  assert.equal(tgView.body.notify.system, true);
+  await bot.notifyStarted({ input: { topic: 'A quiet start' } });
+  assert.equal(sent(/A quiet start/).length, 0, 'switched off');
 
   // Daily summary: once a day after the chosen time.
   sim.telegram = [];

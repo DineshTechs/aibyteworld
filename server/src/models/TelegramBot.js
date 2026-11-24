@@ -29,6 +29,9 @@ const telegramSchema = new mongoose.Schema(
       submitted: { type: Boolean, default: true }, // an author submitted a post for approval
       published: { type: Boolean, default: true }, // Autopilot published a post
       failed: { type: Boolean, default: true }, // an AI job failed or Autopilot skipped a slot
+      started: { type: Boolean, default: true }, // an AI article started (or resumed)
+      problems: { type: Boolean, default: true }, // provider switches or missing photos while writing
+      system: { type: Boolean, default: true }, // site restarts and background task errors
       dailySummary: { type: Boolean, default: true },
     },
     summaryTime: { type: String, default: '21:00', match: /^([01]\d|2[0-3]):[0-5]\d$/ }, // in the Autopilot time zone

@@ -5,6 +5,7 @@ import { Article, Growth, TelegramBot } from '../../models/index.js';
 import { apiFetch } from '../../utils/apiFetch.js';
 import { decryptSecret } from '../../utils/crypto.js';
 import { NOT_PUBLIC, absolute, articleUrl, growthWithSecrets, hasSecret, secretOf, siteContext } from './common.js';
+import { alertSystem } from '../telegram/alert.js';
 
 // Shares each newly published post once per channel: a public Telegram
 // channel, X (Twitter), LinkedIn and a Facebook Page. Messages are built from
@@ -185,6 +186,8 @@ export async function shareArticle(articleId, { retry = false, only } = {}) {
       } catch (err) {
         const msg = String(err.message || err).slice(0, 300);
         logger.warn({ channel: ch, err: msg }, 'Sharing failed');
+        // eslint-disable-next-line no-await-in-loop
+        await alertSystem(`share-${ch}`, `Sharing "${article.title}" to ${ch} failed: ${msg}`, { icon: '⚠️' });
         // eslint-disable-next-line no-await-in-loop
         await Article.updateOne({ _id: article._id, 'shares.channel': ch }, { $set: { 'shares.$.error': msg, 'shares.$.at': new Date() } });
         // eslint-disable-next-line no-await-in-loop

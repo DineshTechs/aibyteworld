@@ -18,14 +18,17 @@ interface TelegramView {
   lastPollAt: string | null;
   lastError: string;
 }
-type NotifyKey = 'held' | 'review' | 'submitted' | 'published' | 'failed' | 'dailySummary';
+type NotifyKey = 'started' | 'held' | 'review' | 'submitted' | 'published' | 'failed' | 'problems' | 'system' | 'dailySummary';
 
 const NOTIFY: { key: NotifyKey; label: string; help: string }[] = [
+  { key: 'started', label: 'Writing started', help: 'When an AI article starts (Autopilot, AI Studio, website articles, refreshes), or resumes after a restart.' },
   { key: 'held', label: 'Autopilot post waiting for approval', help: 'With the reasons it was held, and Publish / Reject buttons.' },
-  { key: 'published', label: 'Autopilot published a post', help: 'When all quality checks passed.' },
+  { key: 'published', label: 'Post published automatically', help: 'Autopilot posts that passed all checks, and posts you scheduled.' },
   { key: 'review', label: 'AI Studio article ready for review', help: 'Articles you started in AI Content Studio, with buttons.' },
   { key: 'submitted', label: 'An author submitted a post', help: 'Posts sent for approval by authors, with buttons.' },
-  { key: 'failed', label: 'Problems', help: 'An AI article failed, or Autopilot skipped a scheduled post.' },
+  { key: 'failed', label: 'Article failed', help: 'An AI article failed, or Autopilot skipped a scheduled post.' },
+  { key: 'problems', label: 'Problems while writing', help: 'The article was finished, but a provider was switched (for example out of quota), or a photo or website page could not be fetched.' },
+  { key: 'system', label: 'Site and background errors', help: 'Site restarts, and errors in scheduled publishing, translations, the newsletter, sharing or the site being unreachable. The same error is sent at most once an hour.' },
   { key: 'dailySummary', label: 'Daily summary', help: 'Posts published, posts waiting, and visitors.' },
 ];
 

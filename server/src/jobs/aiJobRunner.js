@@ -1,9 +1,9 @@
 import { logger } from '../config/logger.js';
-import { Article, ResearchJob } from '../models/index.js';
+import { Article, Category, ResearchJob, User } from '../models/index.js';
 import { logActivity } from '../services/activityService.js';
 import { JobCancelled, runPipeline } from '../services/ai/pipeline.js';
 import { applyAutopilotGate } from '../services/autopilot/gate.js';
-import { notifyAutopilotPublished, notifyFailed, notifyHeld, notifyRefreshReady, notifyReview } from '../services/telegram/bot.js';
+import { notifyAutopilotPublished, notifyFailed, notifyHeld, notifyProblems, notifyRefreshReady, notifyReview, notifyStarted } from '../services/telegram/bot.js';
 
 const STALE_MS = 15 * 60 * 1000;
 let busy = false;
@@ -17,7 +17,20 @@ export async function claimNextJob() {
   );
 }
 
+// Telegram: "Writing started" (or resumed after a restart). Never throws.
+async function announceStart(job) {
+  try {
+    const resumed = (job.steps || []).some((x) => x.status === 'completed');
+    const cat = job.input?.category ? await Category.findById(job.input.category, 'name').lean() : null;
+    const by = job.autopilot?.enabled || !job.createdBy ? null : await User.findById(job.createdBy, 'name').lean();
+    await notifyStarted(job, { resumed, categoryName: cat?.name || '', byName: by?.name || '' });
+  } catch (err) {
+    logger.warn({ err: err.message }, 'Telegram start notice failed');
+  }
+}
+
 export async function runJob(job) {
+  await announceStart(job);
   try {
     await runPipeline(job._id);
     let gate = null;
@@ -29,7 +42,7 @@ export async function runJob(job) {
       }
     }
     // Telegram: tell the admins what happened (never throws).
-    const done = await ResearchJob.findById(job._id).select('article').lean();
+    const done = await ResearchJob.findById(job._id).select('article warnings switches input').lean();
     const article = done?.article ? await Article.findById(done.article) : null;
     if (article && job.input?.refreshOf) {
       if (article.refresh) await notifyRefreshReady(article);
@@ -39,6 +52,8 @@ export async function runJob(job) {
     } else if (article?.status === 'pending_approval') {
       await notifyReview(article);
     }
+    // Anything that went wrong on the way (provider switches, missing photos...).
+    if (done) await notifyProblems(done, article?.title);
   } catch (err) {
     const cancelled = err instanceof JobCancelled;
     await ResearchJob.updateOne(

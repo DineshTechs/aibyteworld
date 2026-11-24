@@ -7,7 +7,7 @@ import { startPublishScheduler } from './jobs/publishScheduler.js';
 import { startGrowthScheduler } from './jobs/growthScheduler.js';
 import { startKeepAlive } from './jobs/keepAlive.js';
 import { startAutopilotScheduler } from './services/autopilot/runner.js';
-import { startTelegramBot } from './services/telegram/bot.js';
+import { notifySystem, startTelegramBot } from './services/telegram/bot.js';
 import { SiteSettings } from './models/index.js';
 import { runMigrations } from './scripts/migrations.js';
 
@@ -23,6 +23,9 @@ async function main() {
   const stopKeepAlive = startKeepAlive();
   const server = createApp().listen(env.PORT, () => {
     logger.info({ port: env.PORT, env: env.NODE_ENV }, `API listening on http://localhost:${env.PORT}`);
+    // Telegram: the live site (re)started. Frequent messages without a deploy
+    // mean the host keeps restarting it.
+    if (env.isProd) notifySystem('restart', `The site started (Node ${process.version}). If you did not just deploy, the host restarted it. Unfinished AI articles resume by themselves.`, { everyMs: 0, icon: '🔄' });
   });
 
   const shutdown = (signal) => {

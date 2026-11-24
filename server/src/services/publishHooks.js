@@ -5,6 +5,7 @@ import { pingIndexNow } from './growth/indexnow.js';
 import { shareArticle } from './growth/share.js';
 import { backfillLinksTo } from './seo/internalLinks.js';
 import { queueTranslation } from './translate/translator.js';
+import { alertSystem } from './telegram/alert.js';
 
 // Work that follows publishing: tell search engines (IndexNow), link older
 // posts to the new one, share it, and start its Hindi version. It runs in the
@@ -18,6 +19,7 @@ function run(name, fn) {
       await fn();
     } catch (err) {
       logger.warn({ hook: name, err: err.message }, 'After-publish task failed');
+      await alertSystem(`hook-${name}`, `After publishing, the "${name}" task failed: ${err.message}`, { icon: '⚠️' });
     }
   })();
   pending.add(p);

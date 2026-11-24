@@ -253,7 +253,7 @@ export async function queueTranslation(sourceId, { auto = false, user, lang = 'h
 }
 
 /** Runs one queued translation. Returns true when there was one. */
-export async function processTranslationOnce({ afterPublish, afterUpdate, notifyReview } = {}) {
+export async function processTranslationOnce({ afterPublish, afterUpdate, notifyReview, notifyProblem } = {}) {
   const stale = new Date(Date.now() - 20 * 60 * 1000);
   const task = await Translation.findOneAndUpdate(
     { $or: [{ status: 'queued' }, { status: 'running', lockedAt: { $lt: stale } }] },
@@ -300,6 +300,7 @@ export async function processTranslationOnce({ afterPublish, afterUpdate, notify
     logger.warn({ task: String(task._id), err: err.message }, 'Translation failed');
     await Translation.updateOne({ _id: task._id }, { $set: { status: 'failed', error: String(err.message).slice(0, 500), finishedAt: new Date() }, $unset: { lockedAt: 1 } });
     await logActivity(null, 'translation.failed', { entityType: 'Article', entityId: task.source, summary: `Translation failed: ${err.message}`.slice(0, 300) });
+    await notifyProblem?.(`A ${LANGS[task.lang]?.name || task.lang} version could not be made: ${err.message}`.slice(0, 600));
   }
   return true;
 }

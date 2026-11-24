@@ -2,6 +2,7 @@ import { logger } from '../config/logger.js';
 import { Article } from '../models/index.js';
 import { logActivity } from '../services/activityService.js';
 import { afterPublish } from '../services/publishHooks.js';
+import { notifyScheduledPublished, notifySystem } from '../services/telegram/bot.js';
 
 // Publishes scheduled articles whose time has come. Each article is claimed with
 // one atomic findOneAndUpdate, so an article can never be published twice even
@@ -29,6 +30,8 @@ export async function publishDueArticles(now = new Date()) {
     });
     // eslint-disable-next-line no-await-in-loop
     await afterPublish(article._id);
+    // eslint-disable-next-line no-await-in-loop
+    await notifyScheduledPublished(article);
   }
   return published;
 }
@@ -40,6 +43,7 @@ export function startPublishScheduler(intervalMs = 30000) {
       if (n) logger.info({ published: n }, 'Scheduler published articles');
     } catch (err) {
       logger.error({ err }, 'Publish scheduler tick failed');
+      await notifySystem('publish', `Scheduled publishing failed: ${err.message}. Scheduled posts may be late.`, { icon: '⚠️' });
     }
   };
   const timer = setInterval(tick, intervalMs);

@@ -182,6 +182,49 @@ Applying it keeps the same address, so rankings and links are kept.`,
 
 export const notifyFailed = (message) => notify('failed', async () => ({ text: `⚠️ ${esc(message).slice(0, 1500)}` }));
 
+// An AI article started (or resumed after a restart).
+export const notifyStarted = (job, { resumed = false, categoryName = '', byName = '' } = {}) =>
+  notify('started', async () => {
+    const i = job.input || {};
+    let what;
+    if (i.refreshOf) what = 'Updating an older post';
+    else if (job.autopilot?.enabled) what = `Autopilot · ${job.autopilot.kind === 'evergreen' ? 'evergreen guide' : 'trending story'}${categoryName ? ` · ${esc(categoryName)}` : ''}`;
+    else if (i.siteUrl) what = `About the website ${esc(i.siteUrl)}${i.sponsored ? ' (sponsored)' : ''}${byName ? ` · started by ${esc(byName)}` : ''}`;
+    else what = `AI Content Studio${byName ? ` · started by ${esc(byName)}` : ''}`;
+    const topic = i.topicAuto && !job.website ? '' : `\n<b>${esc(i.topic || '')}</b>`;
+    return { text: `✍️ <b>${resumed ? 'Writing resumed' : 'Writing started'}</b>${resumed ? ' (after a restart)' : ''}${topic}\n${what}\nUsually 5–10 minutes. You will get the result here.` };
+  });
+
+// Things that went wrong while writing an article that still finished:
+// provider switches, photos or website pages that could not be fetched, fallbacks.
+const PROBLEM = /^(?:No cover photo|No photo for|No images were added|Photo searches were made|The cover photo was found|The first in-article photo|Reading |No screenshot|No site image|SEO metadata was generated|The humanise pass was not used|The writing model reached|Skipped)/;
+export function problemsOf(job) {
+  const out = (job.switches || []).slice(0, 6).map((x) => `${x.step}: switched from ${x.from} to ${x.to}${x.reason ? ` (${x.reason})` : ''}`);
+  for (const w of job.warnings || []) if (PROBLEM.test(w)) out.push(w);
+  return out.slice(0, 10);
+}
+export const notifyProblems = (job, title) => {
+  const list = problemsOf(job);
+  if (!list.length) return Promise.resolve(0);
+  return notify('problems', async () => ({ text: `🟡 <b>Problems while writing</b> "${esc(title || job.input?.topic || '')}" (the article was still finished)\n\n${list.map((x) => `• ${esc(x).slice(0, 300)}`).join('\n')}` }));
+};
+
+// A post scheduled in the admin went live.
+export const notifyScheduledPublished = (article) =>
+  notify('published', async () => ({ text: `📅 <b>Scheduled post published</b>\n\n${articleSummary(article)}`, buttons: await liveButtons(article), photo: await coverUrl(article) }));
+
+// Site and background problems: restarts, scheduler, translation, newsletter
+// or sharing errors. The same kind of problem is sent at most once an hour,
+// so a fault that repeats every few seconds cannot flood the chat.
+const lastSystem = new Map();
+export function notifySystem(key, message, { everyMs = 3600000, icon = '🛠' } = {}) {
+  const now = Date.now();
+  if (now - (lastSystem.get(key) || 0) < everyMs) return Promise.resolve(0);
+  lastSystem.set(key, now);
+  return notify('system', async () => ({ text: `${icon} ${esc(message).slice(0, 1500)}` }));
+}
+export const _resetSystemThrottle = () => lastSystem.clear();
+
 // ---------- Approve / reject ----------
 async function decide(articleId, action, chat) {
   const user = await User.findOne({ _id: chat.user, active: true });

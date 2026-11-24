@@ -7,7 +7,7 @@ import { encryptSecret } from '../utils/crypto.js';
 import { asyncHandler, badRequest, notFound } from '../utils/http.js';
 import { tgEscape } from '../integrations/telegram.js';
 
-const NOTIFY_KEYS = ['held', 'review', 'submitted', 'published', 'failed', 'dailySummary'];
+const NOTIFY_KEYS = ['started', 'held', 'review', 'submitted', 'published', 'failed', 'problems', 'system', 'dailySummary'];
 
 async function view() {
   const doc = await TelegramBot.getSingleton();
