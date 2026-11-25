@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { tg } from '../integrations/telegram.js';
 import { SiteSettings, TelegramBot } from '../models/index.js';
 import { logActivity } from '../services/activityService.js';
-import { createLinkCode, sendToChats } from '../services/telegram/bot.js';
+import { createLinkCode, registerCommands, sendToChats } from '../services/telegram/bot.js';
 import { encryptSecret } from '../utils/crypto.js';
 import { asyncHandler, badRequest, notFound } from '../utils/http.js';
 import { tgEscape } from '../integrations/telegram.js';
@@ -60,6 +60,7 @@ export const updateTelegram = asyncHandler(async (req, res) => {
     }
     // Polling needs the webhook removed; harmless when there is none.
     await tg(b.token, 'deleteWebhook', { drop_pending_updates: false }).catch(() => {});
+    await registerCommands(b.token); // the "/" command menu in Telegram
     doc.token = encryptSecret(b.token);
     doc.tokenLast4 = b.token.slice(-4);
     if (doc.botUsername && doc.botUsername !== me.username) doc.chats = []; // a different bot cannot reach the old chats

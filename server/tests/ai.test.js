@@ -1398,6 +1398,7 @@ test('Telegram: link a chat, notifications with Publish/Reject buttons, only the
   const raw = await TelegramBot.findOne({ key: 'telegram' }).select('+token.data').lean();
   assert.ok(raw.token.data && !raw.token.data.includes('AAFake'));
   assert.ok(sim.telegram.some((m) => m.method === 'deleteWebhook'));
+  assert.ok(sim.telegram.some((m) => m.method === 'setMyCommands'), 'the "/" command menu is set when the bot is connected');
   await request(app).post('/api/admin/telegram/test').set(as('admin')).expect(400); // no chat linked yet
 
   // Linking with a one-time code.
@@ -1547,6 +1548,14 @@ test('Telegram: link a chat, notifications with Publish/Reject buttons, only the
   await say(14, '/autopilot_off');
   await say(15, '/hello');
   assert.match(sim.telegram.at(-1).text, /Commands/);
+  // /help lists every command; the same list is Telegram's "/" menu.
+  await say(70, '/help');
+  for (const c of bot.COMMANDS) assert.ok(sim.telegram.at(-1).text.includes(`/${c.command} –`), c.command);
+  assert.ok(await bot.registerCommands(TG_TOKEN));
+  const menu = sim.telegram.findLast((m) => m.method === 'setMyCommands');
+  assert.deepEqual(menu.commands.map((c) => c.command), bot.COMMANDS.map((c) => c.command));
+  assert.ok(menu.commands.every((c) => /^[a-z0-9_]{1,32}$/.test(c.command) && c.description.length >= 3 && c.description.length <= 256));
+  assert.deepEqual(sim.telegram.findLast((m) => m.method === 'setChatMenuButton').menu_button, { type: 'commands' }, 'the Menu button shows the commands');
 
   // Notification switches are respected.
   await request(app).put('/api/admin/telegram').set(as('admin')).send({ notify: { review: false }, summaryTime: '00:00' }).expect(200);

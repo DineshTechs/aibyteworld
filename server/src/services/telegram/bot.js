@@ -278,16 +278,29 @@ async function newCover(articleId, chat) {
 }
 
 // ---------- Commands ----------
+// Every command, in one place: /help, the unknown-message reply and the
+// command menu Telegram shows when you type "/" (setMyCommands) all use it.
+export const COMMANDS = [
+  { command: 'help', menu: 'All commands and what the buttons do', help: 'This list.' },
+  { command: 'pending', menu: 'Posts waiting for your approval', help: 'Posts waiting for approval (up to 5), each with its photo and ✅ Publish, ↩️ Reject and 🔄 New photo buttons.' },
+  { command: 'recent', menu: 'Latest published posts (change their photo)', help: 'Your last 5 published posts, each with Read it, 🔄 New photo and Open in admin.' },
+  { command: 'site', menu: 'Write an article about a website', help: 'Write an article about a website. Example: <code>/site example.com</code>. Add <code>sponsored</code> after the address for a paid post, and any notes after that: <code>/site example.com sponsored focus on pricing</code>. Sending just a website address does the same.' },
+  { command: 'run', menu: 'Start an Autopilot post now', help: 'Start an Autopilot post now (the next category in the rotation).' },
+  { command: 'status', menu: 'Autopilot, next post and AI providers', help: 'Autopilot on or off, the next post time and category, posts waiting, and which AI providers are ready.' },
+  { command: 'stats', menu: 'Views and reads today and this week', help: 'Page views and reads today and in the last 7 days, the read rate, and the top post.' },
+  { command: 'autopilot_on', menu: 'Turn Autopilot on', help: 'Turn Autopilot on.' },
+  { command: 'autopilot_off', menu: 'Turn Autopilot off', help: 'Turn Autopilot off (posts already being written still finish).' },
+  { command: 'unlink', menu: 'Stop messages to this chat', help: 'Stop all messages to this chat. Link it again from the blog admin → Telegram.' },
+];
+
 const HELP = [
-  '<b>Commands</b>',
-  '/pending – posts waiting for approval',
-  '/recent – the latest published posts (change their photo)',
-  '/status – Autopilot and AI providers',
-  '/stats – visitors today and this week',
-  '/run – start an Autopilot post now',
-  '/site &lt;address&gt; [notes] – write an article about a website (or just send the address). Add the word sponsored after the address for a sponsored post',
-  '/autopilot_on, /autopilot_off – turn Autopilot on or off',
-  '/unlink – stop messages to this chat',
+  '<b>Commands</b> (also in the menu: type /)',
+  ...COMMANDS.map((c) => `/${c.command} – ${c.help}`),
+  '',
+  '<b>Buttons on posts</b>',
+  '✅ Publish · ↩️ Reject (back to draft) · 🔄 New photo (finds, replaces and saves a new cover photo) · ✅ Apply update / 🗑 Discard for refreshed posts. Only the person who linked this chat can use them.',
+  '',
+  'Which messages you get (started, published, problems, errors, daily summary) is set in the blog admin → Telegram.',
 ].join('\n');
 
 async function cmdPending(chatId) {
@@ -502,6 +515,11 @@ export async function handleUpdate(update) {
     return;
   }
   switch (cmd) {
+    case '/help':
+    case '/start':
+    case '/commands':
+      await reply(chatId, HELP);
+      break;
     case '/site':
       await cmdSite(chat, args);
       break;
@@ -583,8 +601,21 @@ export async function createLinkCode(userId) {
 }
 
 /** Polls Telegram for messages and button presses while the bot is enabled. */
+/** Puts the commands in Telegram's "/" menu and shows the Menu button next to the message box. */
+export async function registerCommands(token) {
+  try {
+    await tg(token, 'setMyCommands', { commands: COMMANDS.map((c) => ({ command: c.command, description: c.menu })) });
+    await tg(token, 'setChatMenuButton', { menu_button: { type: 'commands' } });
+    return true;
+  } catch (err) {
+    logger.warn({ err: err.message }, 'Telegram command menu could not be set');
+    return false;
+  }
+}
+
 export function startTelegramBot() {
   let stopped = false;
+  let menuSet = false;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms).unref?.());
   (async () => {
     while (!stopped) {
@@ -596,6 +627,9 @@ export function startTelegramBot() {
           await sleep(15000);
           continue;
         }
+        // The command menu, once per start (it may have changed in an update).
+        // eslint-disable-next-line no-await-in-loop
+        if (!menuSet) menuSet = await registerCommands(token);
         // eslint-disable-next-line no-await-in-loop
         await maybeSendDailySummary().catch((err) => logger.warn({ err: err.message }, 'Telegram daily summary failed'));
         // eslint-disable-next-line no-await-in-loop
